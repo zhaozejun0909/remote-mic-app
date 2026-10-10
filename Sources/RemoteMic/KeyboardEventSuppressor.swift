@@ -57,6 +57,7 @@ final class KeyboardEventSuppressor {
             eventTap,
             0
         ) else {
+            EventTapPort.release(port: eventTap, source: nil)
             return false
         }
 
@@ -73,12 +74,7 @@ final class KeyboardEventSuppressor {
         pendingEvents.removeAll()
         heldEventCounts.removeAll()
         lock.unlock()
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
+        EventTapPort.release(port: eventTap, source: runLoopSource)
         runLoopSource = nil
         eventTap = nil
         isRunning = false

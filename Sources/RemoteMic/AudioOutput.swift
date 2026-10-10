@@ -337,7 +337,12 @@ final class VirtualAudioOutput {
     }
 
     var isReadyForTestTone: Bool {
-        isPlaybackReady && selectedDevice?.id == currentOutputDevice()?.id
+        isPlaybackReady && isBoundToSelectedDevice == true
+    }
+
+    var isBoundToSelectedDevice: Bool? {
+        guard let selectedDevice, let currentDevice = currentOutputDevice() else { return nil }
+        return selectedDevice.id == currentDevice.id
     }
 
     private var isPlaybackReady: Bool {

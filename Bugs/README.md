@@ -27,6 +27,10 @@
 
 | 时间 | Bug | 状态 |
 | --- | --- | --- |
+| 2026-10-10 | [本地键盘监听端口释放](./2026-10-10-local-event-tap-release.md) | 已移植，待长跑验收 |
+| 2026-10-10 | [本地空闲音频恢复抑制](./2026-10-10-local-idle-audio-recovery.md) | 已移植，待真机验收 |
+| 2026-10-10 | [本地共享 HID 权限轮询](./2026-10-10-local-hid-permission-poll.md) | 已移植，待权限验收 |
+| 2026-10-10 | [本地休眠蓝牙暂停](./2026-10-10-local-sleep-bluetooth-work.md) | 已移植，待休眠验收 |
 | 2026-07-29 | [睡眠或音频路由变化后打开页面崩溃](./2026-07-29-audio-route-change-player-crash.md) | 已修复 |
 | 2026-07-30 | [Automatic Application Focus Investigation](./2026-07-30-automatic-application-focus.md) | 已修复 |
 | 2026-07-30 | [cmux Frontmost Refocus Follow-up](./2026-07-30-cmux-frontmost-refocus-follow-up.md) | 已修复 |
