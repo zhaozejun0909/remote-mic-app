@@ -791,10 +791,7 @@ struct OnboardingView: View {
     }
 
     private var remoteImage: NSImage? {
-        guard let url = Bundle.main.url(forResource: "RC003-remote-photo", withExtension: "png") else {
-            return nil
-        }
-        return NSImage(contentsOf: url)
+        RemotePhotoResource.image
     }
 
     private func voiceToolIcon(_ tool: OnboardingVoiceTool) -> String {

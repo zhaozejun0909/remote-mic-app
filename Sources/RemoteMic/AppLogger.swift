@@ -15,6 +15,9 @@ final class AppLogger {
         logURL = base.appendingPathComponent("runtime.log")
     }
 
+    /// Keeps runtime.log plus one previous file, so logs stay under about 4 MB in total.
+    static let maximumLogBytes: UInt64 = 2 * 1024 * 1024
+
     func write(_ message: String) {
         let line = "\(formatter.string(from: Date())) \(message)\n"
         queue.async { [logURL] in
@@ -23,14 +26,18 @@ final class AppLogger {
                let handle = try? FileHandle(forWritingTo: logURL) {
                 defer { try? handle.close() }
                 do {
-                    try handle.seekToEnd()
-                    try handle.write(contentsOf: data)
+                    if try handle.seekToEnd() < Self.maximumLogBytes {
+                        try handle.write(contentsOf: data)
+                        return
+                    }
                 } catch {
                     return
                 }
-            } else {
-                try? data.write(to: logURL, options: .atomic)
+                let previousURL = logURL.deletingPathExtension().appendingPathExtension("1.log")
+                try? FileManager.default.removeItem(at: previousURL)
+                try? FileManager.default.moveItem(at: logURL, to: previousURL)
             }
+            try? data.write(to: logURL, options: .atomic)
         }
     }
 }

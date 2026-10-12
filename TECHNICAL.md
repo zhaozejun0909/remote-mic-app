@@ -25,8 +25,7 @@
 | `XiaomiBluetoothBridge.swift` | CoreBluetooth 扫描、连接、能力协商、语音会话和自动重连 |
 | `ATVVProtocol.swift` | ATVV 命令、能力解析、IMA/DVI ADPCM 解码、帧累积与 PCM 后处理 |
 | `AudioOutput.swift` | CoreAudio 输出设备枚举和 16 kHz 单声道语音写入 |
-| `HIDRemoteMonitor.swift` | RC003 原始 HID 报告、独占/兼容模式、按键重复和活动状态 |
-| `KeyboardEventSuppressor.swift` | 兼容模式下对同一遥控器原生系统事件的短时抑制 |
+| `HIDRemoteMonitor.swift` | RC003 原始 HID 报告、按键手势与重复、活动状态 |
 | `KeyboardInjector.swift` | 键盘、媒体键和预置应用启动动作 |
 | `RemoteVoiceFunctionMapper.swift` | 只对 RC003 把语音键的 F5 usage 映射为 Fn/Globe，并在退出时恢复 |
 | `AppSettings.swift` | 音频设备、增益、HID 开关、按键映射和外设标识持久化 |
@@ -44,7 +43,7 @@
 - 系统名称去除首尾空白后等于 `MI RC`、`Xiaomi Bluetooth Remote 2 Pro` 或“小米蓝牙语音遥控器”；英文名称比较不区分大小写；
 - 广播中包含 ATVV service UUID。
 
-应用不会对所有名称中带有“小米”的蓝牙设备做模糊匹配。连接成功后会保存 macOS 提供的外设 UUID，以便下次优先恢复；初始化或连接失败后清除失效缓存，并在 3 秒后重新扫描。用户主动重新连接时使用约 0.1 秒延迟。
+应用不会对所有名称中带有“小米”的蓝牙设备做模糊匹配。连接成功后会保存 macOS 提供的外设 UUID，以便下次优先恢复；初始化或连接失败后在 3 秒后重新发起连接；连续 6 次连接超时（每次 8 秒）后，每次连接请求改为保持 30 秒，连接成功或用户手动重连后恢复快速重试。已保存遥控器按系统标识直接连接，不常驻扫描；只有尚未保存任何遥控器时才持续扫描，用户手动“重新连接”时额外扫描 60 秒以发现重新配对或新增的遥控器。用户主动重新连接时使用约 0.1 秒延迟。
 
 ATVV 通道为：
 
@@ -61,7 +60,7 @@ ATVV 通道为：
 
 ## 音频输出
 
-`VirtualAudioOutput` 使用 `AVAudioEngine` 和 `AVAudioPlayerNode`，内部格式固定为 16 kHz、单声道、Float32。应用枚举所有具有输出声道的 CoreAudio 设备，并把语音直接写入用户选择的设备，不修改系统默认输入或输出。
+`VirtualAudioOutput` 使用 `AVAudioEngine` 和 `AVAudioPlayerNode`，内部格式固定为 16 kHz、单声道、Float32。应用枚举所有具有输出声道的 CoreAudio 设备，并把语音直接写入用户选择的设备，不修改系统默认输入或输出。遥控器连接期间，没有语音、测试音和待播音频满 30 秒后会暂停引擎的硬件输出并保留配置，下一次语音开始时同步恢复（约 15 ms）；两秒续接等待期间不暂停。
 
 测试音同样只在内存中生成。只有音频设备已经配置、RC003 未在传输语音且没有其他测试音播放时才允许发送；真实语音开始或设备重新配置时会取消测试音，避免阻塞语音缓冲。
 
@@ -82,7 +81,7 @@ ATVV 通道为：
 
 自定义按键映射默认关闭。启用后必须同时具备输入监控和辅助功能权限，否则 HID 处理失败关闭。
 
-`HIDRemoteMonitor` 首先尝试独占打开 RC003。若 macOS 拒绝独占，则退回非独占监听，并由 `KeyboardEventSuppressor` 在收到 RC003 原始报告后的 180 毫秒窗口内抑制匹配的原生系统事件。由于系统 Power 事件可能在 Session Event Tap 之前触发睡眠，自定义映射启用时会先对 RC003 单独应用 `Keyboard Power → F20` 的设备级映射；映射失败时 HID 处理失败关闭。合成事件带有独立标记，不会被再次抑制。
+普通用户进程无法独占 RC003（`kIOReturnNotPrivileged`），因此 `HIDRemoteMonitor` 以共享方式读取原始报告。自定义映射启用时，`RemoteVoiceFunctionMapper` 先对 RC003 单独应用设备级 `UserKeyMapping`：`Keyboard Power → F20`，其余 11 个普通按键映射为 usage 0。macOS 因此不再为这些按键生成原生键盘事件，App 仍能读取原始报告并执行映射，不需要全局键盘事件拦截，其他键盘的输入也不经过本进程。映射失败时 HID 处理失败关闭；遥控器重连时每次打开 HID 设备都会重新应用（服务尚未出现时 0.5 秒后再试一次）。正常退出或关闭自定义映射时恢复启动前的映射；进程被强制结束时，映射保留到遥控器重连为止，且只影响本机，不写入遥控器。
 
 默认映射为：
 
@@ -122,7 +121,8 @@ RC003 的语音键以键盘 F5（usage page `0x07`、usage `0x3E`）出现。`Re
 - 语音 PCM 只存在于进程内存和用户选择的 CoreAudio 输出链路中，不落盘、不上传；
 - 测试音只在内存生成；
 - 持久化内容包括增益、音频设备 UID、自定义映射开关、按键绑定和 macOS 外设 UUID；
-- 日志位于 `~/Library/Logs/RemoteMic/runtime.log`，记录状态和错误，不记录语音内容、蓝牙地址或外设 UUID。
+- 日志位于 `~/Library/Logs/RemoteMic/runtime.log`，超过 2 MB 时轮转为 `runtime.1.log`（只保留一份旧文件），记录状态和错误，不记录语音内容、蓝牙地址或外设 UUID；
+- 不再记录本地使用统计，启动时会删除旧版本保存的统计数据。
 
 ## 构建与测试
 

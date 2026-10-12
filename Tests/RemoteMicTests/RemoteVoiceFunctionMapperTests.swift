@@ -21,6 +21,28 @@ struct RemoteVoiceFunctionMapperTests {
         )
     }
 
+    @Test func mutesRemoteButtonAndRestoresItsOriginalMapping() {
+        let menuSource: UInt64 = 0x0000_0007_0000_0065
+        let mute = HIDUsageMapping(source: menuSource, destination: 0)
+        let original = HIDUsageMapping(source: menuSource, destination: 0x0000_0007_0000_0004)
+        let unrelated = HIDUsageMapping(source: 0x0000_0007_0000_0004, destination: 0x0000_0007_0000_0005)
+        #expect(RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings.contains(mute))
+
+        let applied = RemoteVoiceFunctionMappingPolicy.applying(
+            to: [unrelated, original],
+            buttonMappings: [mute]
+        )
+        #expect(applied == [unrelated, RemoteVoiceFunctionMappingPolicy.remoteVoiceKey, mute])
+
+        let restored = RemoteVoiceFunctionMappingPolicy.restoring(
+            originalVoiceMapping: nil,
+            originalPowerMapping: nil,
+            originalButtonMappings: [original],
+            in: applied
+        )
+        #expect(restored == [unrelated, original])
+    }
+
     @Test func isIdempotentAndRoundTripsItsProperty() {
         let mapping = RemoteVoiceFunctionMappingPolicy.remoteVoiceKey
         #expect(RemoteVoiceFunctionMappingPolicy.applying(to: [mapping]) == [mapping])
@@ -87,6 +109,40 @@ struct RemoteVoiceFunctionMapperTests {
                 ]
             ) == [changedUnrelated]
         )
+    }
+
+    @Test func reapplyMutesAReconnectedRemoteAndRestoreEndsIt() {
+        let first = MappingServiceBox(registryID: 1, mappings: [])
+        let reconnected = MappingServiceBox(registryID: 2, mappings: [])
+        var services = [first.service]
+        let mapper = RemoteVoiceFunctionMapper { services }
+        let muted = RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings
+
+        #expect(mapper.apply(muteRemoteButtons: true, neutralizeVoiceKey: true))
+        #expect(mapper.areRemoteButtonsMuted)
+        #expect(Set(muted.map(\.source)).isSubset(of: Set(first.mappings.map(\.source))))
+        #expect(first.mappings.contains(RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey))
+
+        // The reconnected remote is a new HID service with no mappings yet.
+        services = [reconnected.service]
+        #expect(mapper.reapply())
+        #expect(reconnected.mappings.contains(RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey))
+        #expect(muted.allSatisfy { reconnected.mappings.contains($0) })
+
+        mapper.restore()
+        #expect(reconnected.mappings.isEmpty)
+        #expect(!mapper.reapply())
+        #expect(reconnected.mappings.isEmpty)
+    }
+
+    @Test func turningCustomMappingOffRestoresNativeButtons() {
+        let box = MappingServiceBox(registryID: 1, mappings: [])
+        let mapper = RemoteVoiceFunctionMapper { [box.service] }
+
+        #expect(mapper.apply(muteRemoteButtons: true))
+        #expect(mapper.apply(muteRemoteButtons: false))
+        #expect(!mapper.areRemoteButtonsMuted)
+        #expect(box.mappings == [RemoteVoiceFunctionMappingPolicy.remoteVoiceKey])
     }
 
     @Test func neutralizationRequiresEveryTargetAndRollsBackPartialSuccess() {

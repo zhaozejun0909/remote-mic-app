@@ -110,4 +110,17 @@ struct BluetoothLifecycleTests {
         #expect(!XiaomiVoiceRemoteNameMatcher.matches("MI RC2"))
         #expect(!XiaomiVoiceRemoteNameMatcher.matches("小米"))
     }
+    @Test func discoveryScansOnlyWithoutSavedRemoteOrAfterManualReconnect() {
+        #expect(BluetoothDiscoveryPolicy.shouldScan(hasSavedRemote: false, userInitiated: false))
+        #expect(!BluetoothDiscoveryPolicy.shouldScan(hasSavedRemote: true, userInitiated: false))
+        #expect(BluetoothDiscoveryPolicy.shouldScan(hasSavedRemote: true, userInitiated: true))
+    }
+
+    @Test func connectTimeoutKeepsFastRetriesBeforeWaitingLonger() {
+        for count in 0..<6 {
+            #expect(BluetoothConnectTimeoutPolicy.timeout(afterConsecutiveTimeouts: count) == 8)
+        }
+        #expect(BluetoothConnectTimeoutPolicy.timeout(afterConsecutiveTimeouts: 6) == 30)
+        #expect(BluetoothConnectTimeoutPolicy.timeout(afterConsecutiveTimeouts: 100) == 30)
+    }
 }

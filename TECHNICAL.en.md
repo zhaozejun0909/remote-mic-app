@@ -34,8 +34,7 @@ The bundle contains en.lproj and zh-Hans.lproj with Localizable.strings, InfoPli
 | XiaomiBluetoothBridge.swift | CoreBluetooth scan, connection, capability negotiation, voice session, and reconnect |
 | ATVVProtocol.swift | ATVV commands, capabilities, IMA/DVI ADPCM decoding, frame accumulation, and PCM post-processing |
 | AudioOutput.swift | CoreAudio output discovery and 16 kHz mono voice delivery |
-| HIDRemoteMonitor.swift | raw RC003 HID reports, exclusive/compatibility mode, repeat behavior, and active buttons |
-| KeyboardEventSuppressor.swift | short suppression of duplicate native events in compatibility mode |
+| HIDRemoteMonitor.swift | raw RC003 HID reports, gestures and repeat behavior, and active buttons |
 | KeyboardInjector.swift | keyboard, media-key, and preset-app actions |
 | RemoteVoiceFunctionMapper.swift | RC003-only voice-button F5 to Fn/Globe mapping and restoration |
 | AppSettings.swift | persistent audio, language, HID, mapping, and peripheral settings |
@@ -47,7 +46,7 @@ Candidates are accepted only if either condition is met:
 - Their trimmed system name is MI RC, Xiaomi Bluetooth Remote 2 Pro, or 小米蓝牙语音遥控器. English-name comparison is case-insensitive.
 - Their advertisement includes the ATVV service UUID.
 
-The app does not fuzzy-match every Bluetooth device whose name contains Xiaomi. A successful connection stores the macOS peripheral UUID for priority recovery. Initialization or connection failure clears the stale cache and scans again after three seconds. A user-initiated reconnect uses an approximately 0.1-second delay.
+The app does not fuzzy-match every Bluetooth device whose name contains Xiaomi. A successful connection stores the macOS peripheral UUID for priority recovery. After an initialization or connection failure the app retries after three seconds; after six consecutive 8-second connect timeouts, each pending connect is kept for 30 seconds until a connection succeeds or the user reconnects manually. A saved remote reconnects by its system identifier without continuous scanning; the app scans continuously only while no remote is saved, and a manual reconnect adds a 60-second scan to find re-paired or additional remotes. A user-initiated reconnect uses an approximately 0.1-second delay.
 
 | Purpose | UUID |
 | --- | --- |
@@ -62,7 +61,7 @@ Voice data is accumulated by the remote-declared frame size and decoded with hig
 
 ## Audio output
 
-VirtualAudioOutput uses AVAudioEngine and AVAudioPlayerNode with 16 kHz mono Float32 audio. The app enumerates CoreAudio devices that have output channels and writes voice directly to the selected device without changing the system default input or output.
+VirtualAudioOutput uses AVAudioEngine and AVAudioPlayerNode with 16 kHz mono Float32 audio. The app enumerates CoreAudio devices that have output channels and writes voice directly to the selected device without changing the system default input or output. While a remote is connected, the engine's hardware output is paused after 30 seconds without voice, test tone, or queued audio and keeps its configuration; the next voice start resumes it synchronously (about 15 ms). It never pauses during the two-second continuation wait.
 
 Test tone audio is generated in memory. It is permitted only when an audio device is configured, RC003 is not streaming voice, and no other test tone is playing. A real voice session or device reconfiguration cancels the tone to avoid blocking voice buffers.
 
@@ -83,7 +82,7 @@ Install scripts verify architecture, minimum system version, and code signature,
 
 Custom mapping is off by default. When enabled, Input Monitoring and Accessibility are both required; otherwise HID handling fails closed.
 
-HIDRemoteMonitor first tries to open RC003 exclusively. If macOS rejects exclusive access, it falls back to nonexclusive monitoring. KeyboardEventSuppressor then suppresses matching native system events for 180 milliseconds after an RC003 raw report. Because a system Power event can trigger sleep before the Session Event Tap, enabling custom mapping first applies a device-specific `Keyboard Power → F20` mapping to RC003; HID handling fails closed if that mapping cannot be applied. Synthesized events carry a separate marker and are not suppressed again.
+A user process cannot seize RC003 (`kIOReturnNotPrivileged`), so HIDRemoteMonitor reads raw reports through a shared open. When custom mapping is enabled, RemoteVoiceFunctionMapper first applies a device-specific `UserKeyMapping` to RC003: `Keyboard Power → F20`, and usage 0 for the other 11 buttons. macOS then creates no native key events for them while the app still reads the raw reports, so no global keyboard event tap is needed and other keyboards never pass through this process. HID handling fails closed if the mapping cannot be applied; it is re-applied whenever the remote's HID device opens after a reconnect (with one retry after 0.5 seconds if the service has not appeared yet). A normal quit or turning custom mapping off restores the original mappings; if the process is killed, the mapping stays until the remote reconnects, affects only this Mac, and is never written to the remote.
 
 | Remote button | Default action |
 | --- | --- |
@@ -121,7 +120,8 @@ On macOS 26, the settings window uses native `glassEffect`, glass button styles,
 - Voice PCM exists only in process memory and the selected CoreAudio output path. It is not saved or uploaded.
 - Test tone is generated only in memory.
 - Persistent values include language, gain, audio device UID, custom-mapping state, button bindings, and the macOS peripheral UUID.
-- Runtime logs are written to ~/Library/Logs/RemoteMic/runtime.log. They contain status and errors but not voice content, Bluetooth addresses, or peripheral UUIDs.
+- Runtime logs are written to ~/Library/Logs/RemoteMic/runtime.log and rotate to runtime.1.log after 2 MB (one previous file is kept). They contain status and errors but not voice content, Bluetooth addresses, or peripheral UUIDs.
+- Local usage statistics are no longer recorded; statistics saved by earlier versions are deleted at launch.
 
 ## Build and test
 

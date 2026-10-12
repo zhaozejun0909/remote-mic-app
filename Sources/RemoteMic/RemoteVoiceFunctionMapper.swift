@@ -53,37 +53,50 @@ enum RemoteVoiceFunctionMappingPolicy {
         destination: 0x0000_0007_0000_006F
     )
 
+    // With custom mapping on, every other remote button maps to usage 0, so macOS
+    // creates no native key event while HIDRemoteMonitor still reads the raw reports.
+    // This replaces a global keyboard event tap, because RC003 cannot be seized.
+    static let mutedRemoteButtonSources: [UInt64] = RemoteButton.allCases
+        .filter { $0 != .power }
+        .map { 0x0000_0007_0000_0000 | UInt64($0.hidUsage) }
+
+    static var mutedRemoteButtonMappings: [HIDUsageMapping] {
+        mutedRemoteButtonSources.map { HIDUsageMapping(source: $0, destination: 0) }
+    }
+
+    private static var managedSources: Set<UInt64> {
+        Set([remoteVoiceKey.source, suppressedRemotePowerKey.source] + mutedRemoteButtonSources)
+    }
+
     static func applying(
         to existing: [HIDUsageMapping],
         voiceMapping: HIDUsageMapping = remoteVoiceKey,
-        powerMapping: HIDUsageMapping? = nil
+        powerMapping: HIDUsageMapping? = nil,
+        buttonMappings: [HIDUsageMapping] = []
     ) -> [HIDUsageMapping] {
-        var desired = existing.filter {
-            $0.source != remoteVoiceKey.source &&
-                $0.source != suppressedRemotePowerKey.source
-        } + [voiceMapping]
+        let managed = managedSources
+        var desired = existing.filter { !managed.contains($0.source) } + [voiceMapping]
         if let powerMapping {
             desired.append(powerMapping)
         }
-        return desired
+        return desired + buttonMappings
     }
 
     static func restoring(
         originalVoiceMapping: HIDUsageMapping?,
         originalPowerMapping: HIDUsageMapping?,
+        originalButtonMappings: [HIDUsageMapping] = [],
         in current: [HIDUsageMapping]
     ) -> [HIDUsageMapping] {
-        var restored = current.filter {
-            $0.source != remoteVoiceKey.source &&
-                $0.source != suppressedRemotePowerKey.source
-        }
+        let managed = managedSources
+        var restored = current.filter { !managed.contains($0.source) }
         if let originalVoiceMapping {
             restored.append(originalVoiceMapping)
         }
         if let originalPowerMapping {
             restored.append(originalPowerMapping)
         }
-        return restored
+        return restored + originalButtonMappings
     }
 }
 
@@ -116,29 +129,43 @@ final class RemoteVoiceFunctionMapper {
     private struct OriginalMappings {
         let voice: HIDUsageMapping?
         let power: HIDUsageMapping?
+        let buttons: [HIDUsageMapping]
     }
 
     private let serviceProvider: ServiceProvider
     private var originalMappings: [UInt64: OriginalMappings] = [:]
     private(set) var isApplied = false
-    private(set) var isPowerKeySuppressed = false
+    /// Power is remapped to F20 and every other button is muted on all matched services.
+    private(set) var areRemoteButtonsMuted = false
     private(set) var isVoiceKeyNeutralized = false
+    private var lastRequest: (muteRemoteButtons: Bool, neutralizeVoiceKey: Bool)?
 
     init(serviceProvider: @escaping ServiceProvider = RemoteVoiceFunctionMapper.systemServices) {
         self.serviceProvider = serviceProvider
     }
 
+    /// A reconnected remote gets a new HID service without these mappings.
+    @discardableResult
+    func reapply() -> Bool {
+        guard let lastRequest else { return false }
+        return apply(
+            muteRemoteButtons: lastRequest.muteRemoteButtons,
+            neutralizeVoiceKey: lastRequest.neutralizeVoiceKey
+        )
+    }
+
     @discardableResult
     func apply(
-        suppressPowerKey: Bool = false,
+        muteRemoteButtons: Bool = false,
         neutralizeVoiceKey: Bool = false
     ) -> Bool {
+        lastRequest = (muteRemoteButtons, neutralizeVoiceKey)
         let services = serviceProvider()
         let matchedCount = services.count
         guard matchedCount > 0 else {
             resetAppliedState()
             AppLogger.shared.write(
-                "VOICE FN MAPPING applied=false neutralized=false power_suppressed=false matched=0"
+                "VOICE FN MAPPING applied=false neutralized=false buttons_muted=false matched=0"
             )
             return false
         }
@@ -173,7 +200,12 @@ final class RemoteVoiceFunctionMapper {
                     },
                     power: currentPower == RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey
                         ? nil
-                        : currentPower
+                        : currentPower,
+                    // A mute left behind by a run that did not exit cleanly is ours, not an original mapping.
+                    buttons: current.filter {
+                        RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonSources.contains($0.source) &&
+                            $0.destination != 0
+                    }
                 )
                 newlyStoredRegistryIDs.insert(registryID)
             }
@@ -182,9 +214,12 @@ final class RemoteVoiceFunctionMapper {
                 voiceMapping: neutralizeVoiceKey
                     ? RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey
                     : RemoteVoiceFunctionMappingPolicy.remoteVoiceKey,
-                powerMapping: suppressPowerKey
+                powerMapping: muteRemoteButtons
                     ? RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey
-                    : originalMappings[registryID]?.power
+                    : originalMappings[registryID]?.power,
+                buttonMappings: muteRemoteButtons
+                    ? RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings
+                    : originalMappings[registryID]?.buttons ?? []
             )
             guard service.setMappings(desired) else {
                 if neutralizeVoiceKey {
@@ -206,15 +241,16 @@ final class RemoteVoiceFunctionMapper {
         let allTargetsApplied = appliedCount == matchedCount
         isApplied = neutralizeVoiceKey ? allTargetsApplied : appliedCount > 0
         isVoiceKeyNeutralized = neutralizeVoiceKey && allTargetsApplied
-        isPowerKeySuppressed = suppressPowerKey && allTargetsApplied
+        areRemoteButtonsMuted = muteRemoteButtons && allTargetsApplied
         AppLogger.shared.write(
             "VOICE FN MAPPING applied=\(isApplied) neutralized=\(isVoiceKeyNeutralized) " +
-                "power_suppressed=\(isPowerKeySuppressed) matched=\(matchedCount) applied=\(appliedCount)"
+                "buttons_muted=\(areRemoteButtonsMuted) matched=\(matchedCount) applied=\(appliedCount)"
         )
         return isApplied
     }
 
     func restore() {
+        lastRequest = nil
         guard !originalMappings.isEmpty else {
             resetAppliedState()
             return
@@ -229,6 +265,7 @@ final class RemoteVoiceFunctionMapper {
             let restored = RemoteVoiceFunctionMappingPolicy.restoring(
                 originalVoiceMapping: original.voice,
                 originalPowerMapping: original.power,
+                originalButtonMappings: original.buttons,
                 in: service.readMappings()
             )
             if service.setMappings(restored) {
@@ -270,7 +307,7 @@ final class RemoteVoiceFunctionMapper {
 
     private func resetAppliedState() {
         isApplied = false
-        isPowerKeySuppressed = false
+        areRemoteButtonsMuted = false
         isVoiceKeyNeutralized = false
     }
 

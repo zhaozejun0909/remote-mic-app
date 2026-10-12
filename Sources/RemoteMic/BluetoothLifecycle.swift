@@ -150,3 +150,19 @@ enum ATVVSessionGate {
         return now < cancelledAt.addingTimeInterval(cancelledOpenSuppressionInterval)
     }
 }
+
+enum BluetoothConnectTimeoutPolicy {
+    static let fastRetryCount = 6
+    static let fastTimeout: TimeInterval = 8
+    static let awayTimeout: TimeInterval = 30
+
+    static func timeout(afterConsecutiveTimeouts count: Int) -> TimeInterval {
+        count < fastRetryCount ? fastTimeout : awayTimeout
+    }
+}
+
+enum BluetoothDiscoveryPolicy {
+    static func shouldScan(hasSavedRemote: Bool, userInitiated: Bool) -> Bool {
+        !hasSavedRemote || userInitiated
+    }
+}

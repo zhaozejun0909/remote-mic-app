@@ -122,6 +122,9 @@ final class XiaomiBluetoothBridge: NSObject {
     private var capabilitiesRequested = false
     private var capabilitiesConfirmed = false
     private var requestedReconnectDelay: TimeInterval?
+    /// Fast 8 s retries can revive a stuck connect; once the remote has clearly
+    /// been away, keep each pending connect longer instead of rebuilding every 11 s.
+    private var consecutiveConnectTimeouts = 0
     private var generationCounter: UInt64 = 0
     private var lifecycle: BluetoothLifecyclePhase = .stopped
     private var shouldRun = false
@@ -134,6 +137,8 @@ final class XiaomiBluetoothBridge: NSObject {
     private var microphoneOpened = false
     private var cancelledMicrophoneOpenAt: Date?
     private var sessionID: UInt8 = 0
+    private var lastLoggedBatteryLine: String?
+    private var lastLoggedPowerLine: String?
     private var lastStopAt: Date?
 
     private let serviceUUID = CBUUID(string: ATVVProtocol.serviceUUID)
@@ -199,6 +204,7 @@ final class XiaomiBluetoothBridge: NSObject {
             return
         }
         reconnectWorkItem?.cancel()
+        consecutiveConnectTimeouts = 0
         central?.stopScan()
         if let central, let peripheral, peripheral.state != .disconnected {
             requestedReconnectDelay = 0.1
@@ -371,6 +377,8 @@ final class XiaomiBluetoothBridge: NSObject {
         capabilitiesRequested = false
         capabilitiesConfirmed = false
         capabilities = Self.defaultCapabilities
+        lastLoggedBatteryLine = nil
+        lastLoggedPowerLine = nil
         resetSession()
     }
 
@@ -401,6 +409,9 @@ final class XiaomiBluetoothBridge: NSObject {
 
     private func startConnectionTimeout(generation: UInt64) {
         connectionTimeoutWorkItem?.cancel()
+        let timeout = BluetoothConnectTimeoutPolicy.timeout(
+            afterConsecutiveTimeouts: consecutiveConnectTimeouts
+        )
         let work = DispatchWorkItem { [weak self] in
             guard let self,
                   self.shouldRun,
@@ -408,7 +419,10 @@ final class XiaomiBluetoothBridge: NSObject {
                   self.currentGeneration() == generation,
                   self.lifecycle == .connecting(generation)
             else { return }
-            AppLogger.shared.write("BLE CONNECT TIMEOUT")
+            self.consecutiveConnectTimeouts += 1
+            AppLogger.shared.write(
+                "BLE CONNECT TIMEOUT seconds=\(Int(timeout)) consecutive=\(self.consecutiveConnectTimeouts)"
+            )
             self.state = .reconnecting
             if let central = self.central,
                let peripheral = self.peripheral,
@@ -418,7 +432,7 @@ final class XiaomiBluetoothBridge: NSObject {
             self.finishAttempt(reconnectAfter: 3)
         }
         connectionTimeoutWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
     }
 
     private func resetSession() {
@@ -797,6 +811,7 @@ extension XiaomiBluetoothBridge: CBCentralManagerDelegate {
         }
         connectionTimeoutWorkItem?.cancel()
         connectionTimeoutWorkItem = nil
+        consecutiveConnectTimeouts = 0
         lifecycle = .discovering(generation)
         state = .discovering
         startInitializationTimeout(generation: generation)
@@ -1083,13 +1098,21 @@ extension XiaomiBluetoothBridge {
         guard let data = characteristic.value else { return }
         if characteristic.uuid == batteryLevelUUID {
             let level = data.first.map(Int.init)
-            AppLogger.shared.write("BLE BATTERY level=\(level.map(String.init) ?? "unknown")")
+            let line = "BLE BATTERY level=\(level.map(String.init) ?? "unknown")"
+            if line != lastLoggedBatteryLine {
+                lastLoggedBatteryLine = line
+                AppLogger.shared.write(line)
+            }
             delegate?.bluetoothBridge(self, didUpdateBatteryLevel: level)
             return
         }
         if characteristic.uuid == batteryLevelStatusUUID {
             let powerState = RemotePowerState.decodeBatteryLevelStatus(data)
-            AppLogger.shared.write("BLE POWER state=\(String(describing: powerState))")
+            let line = "BLE POWER state=\(String(describing: powerState))"
+            if line != lastLoggedPowerLine {
+                lastLoggedPowerLine = line
+                AppLogger.shared.write(line)
+            }
             delegate?.bluetoothBridge(self, didUpdatePowerState: powerState)
             return
         }

@@ -44,8 +44,6 @@ private func hidInputReport(
 
 final class HIDRemoteMonitor {
     private let settings: AppSettings
-    private let eventSuppressor: KeyboardEventSuppressor
-    private let ownsEventSuppressor: Bool
     private let scheduler: HIDRemoteScheduling
     private let permissionPoll: HIDPermissionPoll
     private let runtimePermissions: () -> Bool
@@ -57,9 +55,7 @@ final class HIDRemoteMonitor {
     private var activeDevice: IOHIDDevice?
     private(set) var deviceFingerprint: String?
     private(set) var profileID: UUID?
-    private var activeDeviceIsSeized = false
     private var activeUsages = Set<UInt16>()
-    private var nativePassthroughUsages = Set<UInt16>()
     private var repeatTimers: [UInt16: HIDRemoteScheduledTask] = [:]
     private var nonRepeatablePressedButtons = Set<RemoteButton>()
     private var nonRepeatableReleaseTimers: [RemoteButton: HIDRemoteScheduledTask] = [:]
@@ -72,14 +68,14 @@ final class HIDRemoteMonitor {
     var onActiveButtons: ((UUID?, Set<RemoteButton>) -> Void)?
     var onButtonPressed: ((UUID?, String, RemoteButton) -> (profileID: UUID, shouldPerformAction: Bool)?)?
     var onInternalAction: ((UUID?, ButtonAction) -> Void)?
+    /// Called when a remote is opened, so its fresh HID service can be muted again.
+    var onDeviceActivated: (() -> Void)?
 
     init(
         settings: AppSettings,
         profileID: UUID? = nil,
         targetFingerprint: String? = nil,
         excludedFingerprints: @escaping () -> Set<String> = { [] },
-        eventSuppressor: KeyboardEventSuppressor = KeyboardEventSuppressor(),
-        ownsEventSuppressor: Bool = true,
         scheduler: HIDRemoteScheduling = DispatchHIDRemoteScheduler(),
         runtimePermissions: (() -> Bool)? = nil,
         permissionPoll: HIDPermissionPoll? = nil,
@@ -96,8 +92,6 @@ final class HIDRemoteMonitor {
         self.profileID = profileID
         self.targetFingerprint = targetFingerprint
         self.excludedFingerprints = excludedFingerprints
-        self.eventSuppressor = eventSuppressor
-        self.ownsEventSuppressor = ownsEventSuppressor
         self.scheduler = scheduler
         let evaluatePermissions = runtimePermissions ?? {
             HIDRemoteMonitor.isInputMonitoringGranted && KeyboardInjector.isAccessibilityTrusted
@@ -135,7 +129,7 @@ final class HIDRemoteMonitor {
         IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
     }
 
-    func start(powerKeySuppressed: Bool) {
+    func start(remoteButtonsMuted: Bool) {
         stop()
         guard settings.customMappingEnabled else {
             updateStatus(LocalizedMessage("button_mapping.status.system_managed"))
@@ -150,21 +144,18 @@ final class HIDRemoteMonitor {
             mappingEnabled: settings.customMappingEnabled,
             inputMonitoringGranted: inputGranted,
             accessibilityGranted: accessibilityGranted,
-            powerKeySuppressed: powerKeySuppressed
+            remoteButtonsMuted: remoteButtonsMuted
         ) else {
             if !inputGranted {
                 updateStatus(LocalizedMessage("button_mapping.permission.input_monitoring_required"))
             } else if !accessibilityGranted {
                 updateStatus(LocalizedMessage("button_mapping.permission.accessibility_required"))
             } else {
-                updateStatus(LocalizedMessage("button_mapping.error.power_suppression_failed"))
-                AppLogger.shared.write("HID START rejected power_suppressed=false")
+                updateStatus(LocalizedMessage("button_mapping.error.button_muting_failed"))
+                AppLogger.shared.write("HID START rejected buttons_muted=false")
             }
             return
         }
-
-        let suppressionReady = eventSuppressor.start()
-        AppLogger.shared.write("HID FILTER ready=\(suppressionReady)")
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         let matching = [
@@ -190,7 +181,6 @@ final class HIDRemoteMonitor {
                 CFRunLoopGetMain(),
                 CFRunLoopMode.commonModes.rawValue
             )
-            eventSuppressor.stop()
             updateStatus(LocalizedMessage("button_mapping.error.remote_read_failed", arguments: [String(result)]))
             return
         }
@@ -204,12 +194,10 @@ final class HIDRemoteMonitor {
         permissionPollSubscription?.cancel()
         permissionPollSubscription = nil
         resetInputState()
-        if ownsEventSuppressor { eventSuppressor.stop() }
         if let activeDevice {
             IOHIDDeviceClose(activeDevice, IOOptionBits(kIOHIDOptionsTypeNone))
             self.activeDevice = nil
             deviceFingerprint = nil
-            activeDeviceIsSeized = false
         }
         guard let manager else { return }
         IOHIDManagerUnscheduleFromRunLoop(
@@ -243,45 +231,24 @@ final class HIDRemoteMonitor {
         fingerprint: String,
         allowManagerFallback: Bool
     ) -> Bool {
-        let seizeResult = IOHIDDeviceOpen(
-            device,
-            IOOptionBits(kIOHIDOptionsTypeSeizeDevice)
-        )
-        if seizeResult == kIOReturnSuccess {
-            activeDevice = device
-            deviceFingerprint = fingerprint
-            activeDeviceIsSeized = true
-            updateStatus(LocalizedMessage("button_mapping.status.connected"))
-            AppLogger.shared.write("HID CONNECTED mode=seized")
-            return true
-        }
-
+        // RC003 cannot be seized by a user process (kIOReturnNotPrivileged); its native
+        // key events are muted through UserKeyMapping instead, so a shared open is enough.
         let monitorResult = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
         guard monitorResult == kIOReturnSuccess || allowManagerFallback else {
             updateStatus(LocalizedMessage("button_mapping.error.device_read_failed", arguments: [String(monitorResult)]))
-            AppLogger.shared.write(
-                "HID DEVICE OPEN FAILED seize=\(seizeResult) monitor=\(monitorResult)"
-            )
+            AppLogger.shared.write("HID DEVICE OPEN FAILED monitor=\(monitorResult)")
             return false
         }
 
         activeDevice = device
         deviceFingerprint = fingerprint
-        activeDeviceIsSeized = false
-        updateStatus(
-            LocalizedMessage(
-                eventSuppressor.isRunning
-                    ? "button_mapping.status.connected_fallback"
-                    : "button_mapping.status.connected_system_actions_may_remain"
-            )
-        )
+        updateStatus(LocalizedMessage("button_mapping.status.connected"))
         if monitorResult == kIOReturnSuccess {
-            AppLogger.shared.write("HID CONNECTED mode=monitored seize_error=\(seizeResult)")
+            AppLogger.shared.write("HID CONNECTED mode=monitored")
         } else {
-            AppLogger.shared.write(
-                "HID CONNECTED mode=manager_report seize_error=\(seizeResult) monitor_error=\(monitorResult)"
-            )
+            AppLogger.shared.write("HID CONNECTED mode=manager_report monitor_error=\(monitorResult)")
         }
+        onDeviceActivated?()
         return true
     }
 
@@ -290,7 +257,6 @@ final class HIDRemoteMonitor {
         IOHIDDeviceClose(activeDevice, IOOptionBits(kIOHIDOptionsTypeNone))
         self.activeDevice = nil
         deviceFingerprint = nil
-        activeDeviceIsSeized = false
         resetInputState()
         updateStatus(LocalizedMessage("button_mapping.status.disconnected"))
         AppLogger.shared.write("HID DISCONNECTED")
@@ -321,15 +287,10 @@ final class HIDRemoteMonitor {
         process(usages: usages)
     }
 
-    func connectSimulatedDevice(
-        fingerprint: String,
-        profileID: UUID,
-        isSeized: Bool = true
-    ) {
+    func connectSimulatedDevice(fingerprint: String, profileID: UUID) {
         resetInputState()
         deviceFingerprint = fingerprint
         self.profileID = profileID
-        activeDeviceIsSeized = isSeized
     }
 
     func handleSimulatedReport(reportID: UInt32, data: Data) {
@@ -342,7 +303,6 @@ final class HIDRemoteMonitor {
 
     func disconnectSimulatedDevice() {
         deviceFingerprint = nil
-        activeDeviceIsSeized = false
         resetInputState()
     }
 
@@ -354,27 +314,6 @@ final class HIDRemoteMonitor {
 
         for usage in pressed.sorted() {
             guard let button = RemoteButton.usageMap[usage] else { continue }
-            let preflightProfileID = profileID
-            let preflightRecognizesDoubleClick = settings.configuredAction(
-                for: button,
-                trigger: .doubleClick,
-                profileID: preflightProfileID
-            ).action != .disabled
-            let preflightRecognizesLongPress = settings.configuredAction(
-                for: button,
-                trigger: .longPress,
-                profileID: preflightProfileID
-            ).action != .disabled
-            let preflightAction = settings.action(for: button, profileID: preflightProfileID)
-            let usesNativePassthrough = preflightProfileID != nil && shouldUseNativePassthrough(
-                button: button,
-                action: preflightAction,
-                recognizesDoubleClick: preflightRecognizesDoubleClick,
-                recognizesLongPress: preflightRecognizesLongPress
-            )
-            if !activeDeviceIsSeized, !usesNativePassthrough {
-                eventSuppressor.arm(button: button, edge: .down)
-            }
             var shouldPerformAction = true
             if let deviceFingerprint,
                let routing = onButtonPressed?(profileID, deviceFingerprint, button) {
@@ -383,12 +322,7 @@ final class HIDRemoteMonitor {
                 }
                 shouldPerformAction = routing.shouldPerformAction
             }
-            guard let profileID, shouldPerformAction else {
-                if !activeDeviceIsSeized, usesNativePassthrough {
-                    eventSuppressor.arm(button: button, edge: .down)
-                }
-                continue
-            }
+            guard let profileID, shouldPerformAction else { continue }
 
             let recognizesDoubleClick = settings.configuredAction(
                 for: button,
@@ -401,13 +335,6 @@ final class HIDRemoteMonitor {
                 profileID: profileID
             ).action != .disabled
             let action = settings.action(for: button, profileID: profileID)
-            if usesNativePassthrough {
-                nativePassthroughUsages.insert(usage)
-                AppLogger.shared.write(
-                    "HID NATIVE PASSTHROUGH button=\(button.rawValue) action=\(action.rawValue)"
-                )
-                continue
-            }
             if recognizesDoubleClick || recognizesLongPress || gestureRecognizer.isTracking(button) {
                 let commands = gestureRecognizer.press(
                     button,
@@ -431,11 +358,6 @@ final class HIDRemoteMonitor {
         }
 
         for usage in released {
-            let usedNativePassthrough = nativePassthroughUsages.remove(usage) != nil
-            if !activeDeviceIsSeized, !usedNativePassthrough,
-               let button = RemoteButton.usageMap[usage] {
-                eventSuppressor.arm(button: button, edge: .up)
-            }
             repeatTimers.removeValue(forKey: usage)?.cancel()
             if let button = RemoteButton.usageMap[usage] {
                 scheduleNonRepeatableRelease(for: button)
@@ -488,21 +410,6 @@ final class HIDRemoteMonitor {
             return true
         }
         return ![.arrowUp, .arrowDown, .arrowLeft, .arrowRight, .deleteBackward].contains(action)
-    }
-
-    private func shouldUseNativePassthrough(
-        button: RemoteButton,
-        action: ButtonAction,
-        recognizesDoubleClick: Bool,
-        recognizesLongPress: Bool
-    ) -> Bool {
-        guard !activeDeviceIsSeized,
-              !recognizesDoubleClick,
-              !recognizesLongPress,
-              frontmostBundleIdentifier() != PresetApplication.remoteMic.bundleIdentifier
-        else { return false }
-        return (button == .left && action == .arrowLeft) ||
-            (button == .right && action == .arrowRight)
     }
 
     private func scheduleNonRepeatableRelease(for button: RemoteButton) {
@@ -653,7 +560,6 @@ final class HIDRemoteMonitor {
     private func resetInputState() {
         repeatTimers.values.forEach { $0.cancel() }
         repeatTimers.removeAll()
-        nativePassthroughUsages.removeAll()
         nonRepeatableReleaseTimers.values.forEach { $0.cancel() }
         nonRepeatableReleaseTimers.removeAll()
         nonRepeatablePressedButtons.removeAll()

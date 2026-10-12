@@ -1,5 +1,4 @@
 import AppKit
-import Charts
 import Combine
 import CoreBluetooth
 import SwiftUI
@@ -8,7 +7,6 @@ import UniformTypeIdentifiers
 private enum SettingsSection: String, CaseIterable, Identifiable {
     case connection
     case mapping
-    case statistics
     case permissions
     case about
 
@@ -18,7 +16,6 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .connection: return "settings.section.connection"
         case .mapping: return "settings.section.buttons"
-        case .statistics: return "settings.section.statistics"
         case .permissions: return "settings.section.permissions"
         case .about: return "settings.section.about"
         }
@@ -28,7 +25,6 @@ private enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .connection: return "link"
         case .mapping: return "keyboard"
-        case .statistics: return "chart.bar.xaxis"
         case .permissions: return "shield.lefthalf.filled"
         case .about: return "info.circle"
         }
@@ -145,7 +141,6 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .connection
     @State private var selectedRemoteButton: RemoteButton = .ok
     @State private var isMappingSelectionLocked = true
-    @State private var selectedUsagePeriod: UsageStatisticsPeriod = .today
     @State private var mappingEditingTarget: ShortcutEditingTarget?
     @State private var isPresetApplicationActionsExpanded = false
     @State private var shortcutCaptureTarget: ShortcutEditingTarget?
@@ -386,8 +381,6 @@ struct SettingsView: View {
             connectionPage
         case .mapping:
             mappingPage
-        case .statistics:
-            statisticsPage
         case .permissions:
             permissionsPage
         case .about:
@@ -1786,184 +1779,6 @@ struct SettingsView: View {
         }
     }
 
-    private var statisticsPage: some View {
-        settingsPage {
-            HStack(spacing: 14) {
-                PageHeader(title: localization.text("statistics.page.title"))
-                Spacer(minLength: 20)
-                HStack(spacing: 8) {
-                    ForEach(UsageStatisticsPeriod.allCases) { period in
-                        Button {
-                            selectedUsagePeriod = period
-                        } label: {
-                            Text(localization.text(usagePeriodLocalizationKey(period)))
-                                .font(.system(size: 15, weight: .semibold))
-                                .frame(width: 92, height: 38)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(
-                            selectedUsagePeriod == period ? Color.white : Color.primary
-                        )
-                        .background(
-                            selectedUsagePeriod == period
-                                ? Color.accentColor
-                                : Color(nsColor: .controlBackgroundColor),
-                            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        )
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(
-                                    selectedUsagePeriod == period
-                                        ? Color.accentColor
-                                        : Color(nsColor: .separatorColor).opacity(0.65),
-                                    lineWidth: 1
-                                )
-                        }
-                        .accessibilityAddTraits(
-                            selectedUsagePeriod == period ? .isSelected : []
-                        )
-                    }
-                }
-                StatusPill(
-                    text: localization.text("about.privacy.local_only"),
-                    tint: .green
-                )
-            }
-        } content: {
-            CompatibilityGlassContainer(spacing: 14) {
-                VStack(spacing: 14) {
-                    statisticsPeriodContent
-                    voiceSessionRankingCard
-                }
-            }
-        }
-    }
-
-    private var voiceSessionRankingCard: some View {
-        GlassPanel {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(systemName: "trophy.fill")
-                        .font(.headline)
-                        .foregroundStyle(.orange)
-                        .frame(width: 32, height: 32)
-                        .compatibilityTintedGlass(tint: Color.orange.opacity(0.14), in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("statistics.voice_ranking.title")
-                            .font(.headline)
-                        Text("statistics.voice_ranking.description")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                if settings.voiceSessionRanking.isEmpty {
-                    Text("statistics.voice_ranking.empty")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 72, alignment: .center)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(Array(settings.voiceSessionRanking.enumerated()), id: \.element.id) {
-                            index, record in
-                            HStack(spacing: 12) {
-                                Text("#\(index + 1)")
-                                    .font(.system(.body, design: .rounded).weight(.semibold))
-                                    .foregroundStyle(index < 3 ? Color.orange : Color.secondary)
-                                    .monospacedDigit()
-                                    .frame(width: 36, alignment: .leading)
-
-                                Text(chartDurationText(
-                                    seconds: UsageStatisticsPresentation.wholeSeconds(
-                                        record.duration
-                                    )
-                                ))
-                                .font(.system(.body, design: .rounded).weight(.semibold))
-                                .monospacedDigit()
-
-                                Spacer(minLength: 12)
-
-                                Text(voiceSessionDateText(record.endedAt))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(.vertical, 9)
-
-                            if index < settings.voiceSessionRanking.count - 1 {
-                                Divider()
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var statisticsPeriodContent: some View {
-        switch selectedUsagePeriod {
-        case .today:
-            HStack(alignment: .top, spacing: 14) {
-                UsageBarChart(
-                    title: localization.text("statistics.metric.button_count"),
-                    subtitle: localization.text("statistics.chart.last_seven_days"),
-                    systemImage: "button.programmable",
-                    points: dailyUsageChartPoints,
-                    metric: .buttonPressCount,
-                    tint: .blue
-                )
-                UsageBarChart(
-                    title: localization.text("statistics.metric.voice_duration"),
-                    subtitle: localization.text("statistics.chart.last_seven_days"),
-                    systemImage: "waveform",
-                    points: dailyUsageChartPoints,
-                    metric: .voiceDuration,
-                    tint: .orange
-                )
-            }
-
-        case .thisWeek:
-            HStack(alignment: .top, spacing: 14) {
-                UsageBarChart(
-                    title: localization.text("statistics.metric.button_count"),
-                    subtitle: localization.text("statistics.chart.weekly_history"),
-                    systemImage: "button.programmable",
-                    points: weeklyUsageChartPoints,
-                    metric: .buttonPressCount,
-                    tint: .blue
-                )
-                UsageBarChart(
-                    title: localization.text("statistics.metric.voice_duration"),
-                    subtitle: localization.text("statistics.chart.weekly_history"),
-                    systemImage: "waveform",
-                    points: weeklyUsageChartPoints,
-                    metric: .voiceDuration,
-                    tint: .orange
-                )
-            }
-
-        case .total:
-            GlassPanel {
-                HStack(spacing: 14) {
-                    UsageStatisticCard(
-                        systemImage: "button.programmable",
-                        title: localization.text("statistics.metric.button_count"),
-                        value: buttonPressCountText(for: .total),
-                        tint: .blue
-                    )
-                    UsageStatisticCard(
-                        systemImage: "waveform",
-                        title: localization.text("statistics.metric.voice_duration"),
-                        value: voiceDurationText(for: .total),
-                        tint: .orange
-                    )
-                }
-            }
-            .frame(minHeight: 330, alignment: .top)
-        }
-    }
-
     private var aboutPage: some View {
         settingsPage {
             PageHeader(title: localization.text("menu.about"))
@@ -2334,158 +2149,6 @@ struct SettingsView: View {
         language == .system ? localization.text("language.system") : language.nativeDisplayName
     }
 
-    private func buttonPressCountText(for period: UsageStatisticsPeriod) -> String {
-        localizedNumber(settings.usageStatistics(for: period).buttonPressCount)
-    }
-
-    private func voiceDurationText(for period: UsageStatisticsPeriod) -> String {
-        let statistics = settings.usageStatistics(for: period)
-        let totalSeconds = max(
-            0,
-            Int(min(statistics.voiceDuration.rounded(), Double(Int.max)))
-        )
-        let hours = totalSeconds / 3_600
-        let minutes = totalSeconds % 3_600 / 60
-        let seconds = totalSeconds % 60
-        if hours > 0 {
-            return String(
-                format: localization.text("usage.duration.hours_minutes"),
-                locale: localization.locale,
-                arguments: [localizedNumber(UInt64(hours)), localizedNumber(UInt64(minutes))]
-            )
-        }
-        if minutes > 0 {
-            return String(
-                format: localization.text("usage.duration.minutes_seconds"),
-                locale: localization.locale,
-                arguments: [localizedNumber(UInt64(minutes)), localizedNumber(UInt64(seconds))]
-            )
-        }
-        return String(
-            format: localization.text("usage.duration.seconds"),
-            locale: localization.locale,
-            arguments: [localizedNumber(UInt64(seconds))]
-        )
-    }
-
-    private var dailyUsageChartPoints: [UsageChartPoint] {
-        usageChartPoints(
-            from: settings.dailyUsageStatistics(days: 7),
-            dateFormatTemplate: "EEE"
-        )
-    }
-
-    private var weeklyUsageChartPoints: [UsageChartPoint] {
-        let series = settings.weeklyUsageStatisticsSeries(recentWeeks: 7)
-        let hasEarlierStatistics = series.earlierStatistics.buttonPressCount > 0 ||
-            series.earlierStatistics.voiceDuration > 0
-        let statistics = (hasEarlierStatistics ? [series.earlierStatistics] : []) +
-            series.weeklyBuckets.map(\.statistics)
-        let visibleVoiceDuration = statistics.reduce(0) { result, statistics in
-            result + max(0, statistics.voiceDuration)
-        }
-        let displayedVoiceSeconds = UsageStatisticsPresentation.apportionedWholeSeconds(
-            statistics.map(\.voiceDuration),
-            totalDuration: visibleVoiceDuration
-        )
-        let formatter = DateFormatter()
-        formatter.locale = localization.locale
-        formatter.setLocalizedDateFormatFromTemplate("Md")
-        let dates = (hasEarlierStatistics ? [Date.distantPast] : []) +
-            series.weeklyBuckets.map(\.startDate)
-        let labels = (hasEarlierStatistics
-            ? [localization.text("statistics.chart.earlier")]
-            : []) + series.weeklyBuckets.map { formatter.string(from: $0.startDate) }
-        return statistics.indices.map { index in
-            usageChartPoint(
-                date: dates[index],
-                label: labels[index],
-                statistics: statistics[index],
-                displayedVoiceSeconds: displayedVoiceSeconds[index]
-            )
-        }
-    }
-
-    private func usageChartPoint(
-        date: Date,
-        label: String,
-        statistics: UsageStatistics,
-        displayedVoiceSeconds: Int? = nil
-    ) -> UsageChartPoint {
-        UsageChartPoint(
-            date: date,
-            label: label,
-            buttonPressCount: Double(statistics.buttonPressCount),
-            buttonPressCountLabel: localizedNumber(statistics.buttonPressCount),
-            voiceDuration: max(0, statistics.voiceDuration),
-            voiceDurationLabel: chartDurationText(
-                seconds: displayedVoiceSeconds ?? UsageStatisticsPresentation.wholeSeconds(
-                    statistics.voiceDuration
-                )
-            )
-        )
-    }
-
-    private func usageChartPoints(
-        from buckets: [UsageStatisticsBucket],
-        dateFormatTemplate: String
-    ) -> [UsageChartPoint] {
-        let formatter = DateFormatter()
-        formatter.locale = localization.locale
-        formatter.setLocalizedDateFormatFromTemplate(dateFormatTemplate)
-        return buckets.map { bucket in
-            usageChartPoint(
-                date: bucket.startDate,
-                label: formatter.string(from: bucket.startDate),
-                statistics: bucket.statistics
-            )
-        }
-    }
-
-    private func chartDurationText(seconds totalSeconds: Int) -> String {
-        let hours = totalSeconds / 3_600
-        let minutes = totalSeconds % 3_600 / 60
-        let seconds = totalSeconds % 60
-        if hours > 0 {
-            return String(
-                format: "%d:%02d:%02d",
-                locale: localization.locale,
-                hours,
-                minutes,
-                seconds
-            )
-        }
-        return String(
-            format: "%d:%02d",
-            locale: localization.locale,
-            minutes,
-            seconds
-        )
-    }
-
-    private func voiceSessionDateText(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = localization.locale
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
-
-    private func usagePeriodLocalizationKey(_ period: UsageStatisticsPeriod) -> String {
-        switch period {
-        case .today: return "statistics.period.today"
-        case .thisWeek: return "statistics.period.this_week"
-        case .total: return "statistics.period.total"
-        }
-    }
-
-    private func localizedNumber(_ value: UInt64) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = localization.locale
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
-    }
-
     private func exportConfiguration() {
         configurationStatus = nil
         guard let url = ConfigurationFilePanel.exportURL(
@@ -2707,53 +2370,6 @@ struct SettingsView: View {
         else { return }
         isWaitingForMappingPermissions = false
         model.applyHIDSettings()
-    }
-}
-
-enum UsageStatisticsPresentation {
-    static func wholeSeconds(_ duration: TimeInterval) -> Int {
-        guard !duration.isNaN, duration > 0 else { return 0 }
-        guard duration.isFinite else { return .max }
-        let roundedDuration = duration.rounded()
-        guard roundedDuration < Double(Int.max) else { return .max }
-        return Int(roundedDuration)
-    }
-
-    static func apportionedWholeSeconds(
-        _ durations: [TimeInterval],
-        totalDuration: TimeInterval
-    ) -> [Int] {
-        guard !durations.isEmpty else { return [] }
-        let sanitizedDurations = durations.map { duration in
-            duration.isFinite ? max(0, duration) : 0
-        }
-        var result = sanitizedDurations.map(flooredWholeSeconds)
-        let targetTotal = wholeSeconds(totalDuration)
-        let currentTotal = result.reduce(0) { partialResult, value in
-            let (sum, overflow) = partialResult.addingReportingOverflow(value)
-            return overflow ? .max : sum
-        }
-        let secondsToDistribute = min(
-            result.count,
-            max(0, targetTotal - currentTotal)
-        )
-        let indicesByRemainder = sanitizedDurations.indices.sorted { lhs, rhs in
-            let lhsRemainder = sanitizedDurations[lhs] - sanitizedDurations[lhs].rounded(.down)
-            let rhsRemainder = sanitizedDurations[rhs] - sanitizedDurations[rhs].rounded(.down)
-            if lhsRemainder == rhsRemainder { return lhs < rhs }
-            return lhsRemainder > rhsRemainder
-        }
-        for index in indicesByRemainder.prefix(secondsToDistribute) {
-            result[index] += 1
-        }
-        return result
-    }
-
-    private static func flooredWholeSeconds(_ duration: TimeInterval) -> Int {
-        guard duration > 0 else { return 0 }
-        let roundedDuration = duration.rounded(.down)
-        guard roundedDuration < Double(Int.max) else { return .max }
-        return Int(roundedDuration)
     }
 }
 
@@ -3067,125 +2683,6 @@ private struct GlassPanel<Content: View>: View {
     }
 }
 
-private struct UsageStatisticCard: View {
-    let systemImage: String
-    let title: String
-    let value: String
-    let tint: Color
-
-    var body: some View {
-        HStack(spacing: 13) {
-            Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 44, height: 44)
-                .compatibilityTintedGlass(tint: tint.opacity(0.14), in: Circle())
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.system(size: 21, weight: .semibold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-
-            Spacer(minLength: 8)
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .compatibilityTintedGlass(
-            tint: tint.opacity(0.08),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
-    }
-}
-
-private struct UsageChartPoint: Identifiable {
-    let date: Date
-    let label: String
-    let buttonPressCount: Double
-    let buttonPressCountLabel: String
-    let voiceDuration: Double
-    let voiceDurationLabel: String
-
-    var id: Date { date }
-}
-
-private enum UsageChartMetric {
-    case buttonPressCount
-    case voiceDuration
-
-    func value(for point: UsageChartPoint) -> Double {
-        switch self {
-        case .buttonPressCount: return point.buttonPressCount
-        case .voiceDuration: return point.voiceDuration
-        }
-    }
-
-    func label(for point: UsageChartPoint) -> String {
-        switch self {
-        case .buttonPressCount: return point.buttonPressCountLabel
-        case .voiceDuration: return point.voiceDurationLabel
-        }
-    }
-}
-
-private struct UsageBarChart: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let points: [UsageChartPoint]
-    let metric: UsageChartMetric
-    let tint: Color
-
-    private var maximumValue: Double {
-        max(1, points.map { metric.value(for: $0) }.max() ?? 0) * 1.25
-    }
-
-    var body: some View {
-        GlassPanel {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Image(systemName: systemImage)
-                        .font(.headline)
-                        .foregroundStyle(tint)
-                        .frame(width: 32, height: 32)
-                        .compatibilityTintedGlass(tint: tint.opacity(0.14), in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.headline)
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Chart(points) { point in
-                    BarMark(
-                        x: .value(subtitle, point.label),
-                        y: .value(title, metric.value(for: point))
-                    )
-                    .foregroundStyle(tint.gradient)
-                    .cornerRadius(5)
-                    .annotation(position: .top, spacing: 4) {
-                        Text(metric.label(for: point))
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-                .chartYScale(domain: 0...maximumValue)
-                .chartYAxis(.hidden)
-                .frame(height: 250)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .top)
-    }
-}
-
-@MainActor
 private enum ConfigurationFilePanel {
     static func exportURL(title: String, prompt: String) -> URL? {
         let panel = NSSavePanel()
@@ -3253,20 +2750,10 @@ private struct DeviceStatusStep: View {
     }
 }
 
-private enum RC003ImageResource {
-    static let image: NSImage? = {
-        guard let url = Bundle.main.url(
-            forResource: "RC003-remote-photo",
-            withExtension: "png"
-        ) else { return nil }
-        return NSImage(contentsOf: url)
-    }()
-}
-
 private struct RC003Photo: View {
     var body: some View {
         Group {
-            if let photo = RC003ImageResource.image {
+            if let photo = RemotePhotoResource.image {
                 Image(nsImage: photo)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
