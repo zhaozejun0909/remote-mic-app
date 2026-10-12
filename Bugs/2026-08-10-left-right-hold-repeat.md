@@ -66,3 +66,8 @@
 - focused monitored-mode 硬件模拟：3 个测试、5 个参数用例通过。
 - seized 模式原有左右方向 App timer 连发仍保留，避免独占成功设备失去连续动作。
 - 当前自动化边界到生产 raw HID parser、monitor 状态机、计时器、事件抑制和 action performer；进程内模拟不能证明 WindowServer 在实体遥控器上生成原生自动连发，因此 Preview 仍需用户完成真实输入框验收。
+
+## 2026-10-10 更新
+
+- `perf/simplify-idle-resources` 分支改为用 `UserKeyMapping` 在 HID 层屏蔽遥控器原生按键并删除 `KeyboardEventSuppressor`，左右键原生透传随之移除，统一由 App 100ms 连发；本修复中的 held count 重复增加问题也随拦截器一起消失。
+- 用户于 2026-10-10 在其他 APP 输入框真机长按左右键，连续移动正常；见 `Testing/HIDButtonMuting.md`。

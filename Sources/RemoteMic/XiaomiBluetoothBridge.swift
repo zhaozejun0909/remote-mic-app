@@ -11,6 +11,11 @@ enum BluetoothBridgeState: Equatable {
     case reconnecting
     case failed(LocalizedMessage)
 
+    /// A peripheral was found and the bridge is connecting or initializing it.
+    var isConnectionInProgress: Bool {
+        self == .connecting || self == .discovering
+    }
+
     var message: LocalizedMessage {
         switch self {
         case .stopped: return LocalizedMessage("common.status.stopped")

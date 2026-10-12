@@ -70,6 +70,8 @@ final class HIDRemoteMonitor {
     var onInternalAction: ((UUID?, ButtonAction) -> Void)?
     /// Called when a remote is opened, so its fresh HID service can be muted again.
     var onDeviceActivated: (() -> Void)?
+    /// Called after Input Monitoring or Accessibility is revoked and monitoring stopped.
+    var onPermissionsRevoked: (() -> Void)?
 
     init(
         settings: AppSettings,
@@ -541,6 +543,7 @@ final class HIDRemoteMonitor {
         guard actionPerformer(button, trigger, configured) else {
             stop()
             updateStatus(LocalizedMessage("button_mapping.permission.accessibility_expired"))
+            onPermissionsRevoked?()
             return false
         }
         AppLogger.shared.write(
@@ -586,6 +589,7 @@ final class HIDRemoteMonitor {
         stop()
         updateStatus(LocalizedMessage("button_mapping.permission.system_expired"))
         AppLogger.shared.write("HID RELEASED permission_revoked")
+        onPermissionsRevoked?()
     }
 
     static func fingerprint(for device: IOHIDDevice) -> String? {

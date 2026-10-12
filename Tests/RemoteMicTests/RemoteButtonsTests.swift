@@ -974,6 +974,22 @@ struct RemoteButtonsTests {
         ])
     }
 
+    @Test func remoteButtonsAreMutedOnlyWhenTheAppCanReplayThem() {
+        #expect(HIDPermissionGate.canMuteRemoteButtons(mappingEnabled: true, inputMonitoringGranted: true, accessibilityGranted: true))
+        #expect(!HIDPermissionGate.canMuteRemoteButtons(mappingEnabled: true, inputMonitoringGranted: false, accessibilityGranted: true))
+        #expect(!HIDPermissionGate.canMuteRemoteButtons(mappingEnabled: true, inputMonitoringGranted: true, accessibilityGranted: false))
+        #expect(!HIDPermissionGate.canMuteRemoteButtons(mappingEnabled: false, inputMonitoringGranted: true, accessibilityGranted: true))
+    }
+
+    @Test func stoppedMonitoringRestoresNativeButtons() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let monitor = try String(contentsOf: root.appendingPathComponent("Sources/RemoteMic/HIDRemoteMonitor.swift"), encoding: .utf8)
+        let model = try String(contentsOf: root.appendingPathComponent("Sources/RemoteMic/BridgeAppModel.swift"), encoding: .utf8)
+        // Revoked permissions and failed actions both stop monitoring and must hand buttons back.
+        #expect(monitor.components(separatedBy: "onPermissionsRevoked?()").count - 1 == 2)
+        #expect(model.contains("self?.scheduleHIDSettingsAfterPermissionRevocation()"))
+    }
+
     @Test func HIDPermissionGateFailsClosed() {
         #expect(!HIDPermissionGate.canMonitor(
             mappingEnabled: true,

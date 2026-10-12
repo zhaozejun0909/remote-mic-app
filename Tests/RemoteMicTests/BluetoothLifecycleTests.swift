@@ -123,4 +123,11 @@ struct BluetoothLifecycleTests {
         #expect(BluetoothConnectTimeoutPolicy.timeout(afterConsecutiveTimeouts: 6) == 30)
         #expect(BluetoothConnectTimeoutPolicy.timeout(afterConsecutiveTimeouts: 100) == 30)
     }
+    @Test func discoveryTimeLimitWaitsOnlyForConnectionsAlreadyInProgress() {
+        #expect(BluetoothBridgeState.connecting.isConnectionInProgress)
+        #expect(BluetoothBridgeState.discovering.isConnectionInProgress)
+        #expect(!BluetoothBridgeState.scanning.isConnectionInProgress)
+        #expect(!BluetoothBridgeState.reconnecting.isConnectionInProgress)
+        #expect(!BluetoothBridgeState.ready("MI RC").isConnectionInProgress)
+    }
 }

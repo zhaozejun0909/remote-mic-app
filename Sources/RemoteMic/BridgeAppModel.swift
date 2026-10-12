@@ -108,6 +108,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var bluetoothBridges: [UUID: XiaomiBluetoothBridge] = [:]
     private var bluetoothBridgeStates: [ObjectIdentifier: BluetoothBridgeState] = [:]
     private var discoveryBluetoothBridge: XiaomiBluetoothBridge?
+    private var discoveryTimeLimitWorkItem: DispatchWorkItem?
     private var activeBluetoothVoiceDeviceIdentifier: UUID?
     private var bluetoothVoiceTraceCounter: UInt64 = 0
     private var activeBluetoothVoiceTraceID: UInt64?
@@ -120,6 +121,7 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     private var hidMonitors: [String: HIDRemoteMonitor] = [:]
     private var discoveryHIDMonitor: HIDRemoteMonitor?
     private var hidRemoteButtonsMuted = false
+    private var hidPermissionRevocationPending = false
     private var started = false
     private var terminationObserver: NSObjectProtocol?
     private var completedUpdateHIDRecoveryWorkItem: DispatchWorkItem?
@@ -300,6 +302,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         idleAudioPauseWorkItem = nil
         bluetoothBridges.values.forEach { $0.stop() }
         discoveryBluetoothBridge?.stop()
+        discoveryTimeLimitWorkItem?.cancel()
+        discoveryTimeLimitWorkItem = nil
         bluetoothBridges.removeAll()
         bluetoothBridgeStates.removeAll()
         discoveryBluetoothBridge = nil
@@ -1035,7 +1039,23 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         monitor.onDeviceActivated = { [weak self] in
             self?.reapplyRemoteButtonMuting()
         }
+        monitor.onPermissionsRevoked = { [weak self] in
+            self?.scheduleHIDSettingsAfterPermissionRevocation()
+        }
         return monitor
+    }
+
+    /// Without permissions the app can no longer replay remote buttons, so their native
+    /// behavior must come back. Several monitors may report the same revocation at once.
+    private func scheduleHIDSettingsAfterPermissionRevocation() {
+        guard !hidPermissionRevocationPending else { return }
+        hidPermissionRevocationPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.hidPermissionRevocationPending = false
+            guard self.started else { return }
+            self.applyHIDSettings()
+        }
     }
 
     /// A reconnected remote gets a fresh HID service, often before Bluetooth is ready;
@@ -1170,8 +1190,15 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     /// Scans only while no remote is saved, or for a limited time after a manual reconnect.
     /// A saved remote reconnects through its own bridge without scanning.
     private func startBluetoothDiscoveryIfNeeded(userInitiated: Bool = false) {
-        guard started, discoveryBluetoothBridge == nil else { return }
+        guard started else { return }
         let isTimeLimited = !bluetoothBridges.isEmpty
+        if let existing = discoveryBluetoothBridge {
+            // Another manual reconnect restarts the search window.
+            if userInitiated, isTimeLimited {
+                scheduleDiscoveryTimeLimit(for: existing, after: Self.manualDiscoveryDuration)
+            }
+            return
+        }
         guard BluetoothDiscoveryPolicy.shouldScan(
             hasSavedRemote: isTimeLimited,
             userInitiated: userInitiated
@@ -1188,18 +1215,33 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
         bridge.setSystemSuspended(systemAudioSuspension.isSuspended)
         bridge.start()
         guard isTimeLimited else { return }
-        AppLogger.shared.write("BLE DISCOVERY started seconds=\(Int(Self.manualDiscoveryDuration))")
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.manualDiscoveryDuration) { [weak self, weak bridge] in
+        scheduleDiscoveryTimeLimit(for: bridge, after: Self.manualDiscoveryDuration)
+    }
+
+    private static let manualDiscoveryDuration: TimeInterval = 60
+    /// Covers the bridge's own 8 s connect and 8 s initialization timeouts.
+    private static let discoveryConnectionGrace: TimeInterval = 20
+
+    /// The limit applies to searching only; a connection that already started may finish.
+    private func scheduleDiscoveryTimeLimit(for bridge: XiaomiBluetoothBridge, after delay: TimeInterval) {
+        discoveryTimeLimitWorkItem?.cancel()
+        AppLogger.shared.write("BLE DISCOVERY limit seconds=\(Int(delay))")
+        let work = DispatchWorkItem { [weak self, weak bridge] in
             guard let self, let bridge, self.discoveryBluetoothBridge === bridge else { return }
+            self.discoveryTimeLimitWorkItem = nil
+            if bridge.state.isConnectionInProgress {
+                self.scheduleDiscoveryTimeLimit(for: bridge, after: Self.discoveryConnectionGrace)
+                return
+            }
             self.discoveryBluetoothBridge = nil
             bridge.stop()
             self.bluetoothBridgeStates.removeValue(forKey: ObjectIdentifier(bridge))
             self.refreshBluetoothPresentation()
             AppLogger.shared.write("BLE DISCOVERY stopped reason=time_limit")
         }
+        discoveryTimeLimitWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
-
-    private static let manualDiscoveryDuration: TimeInterval = 60
 
     private func registerBluetoothBridgeIfNeeded(_ bridge: XiaomiBluetoothBridge) -> UUID? {
         guard let identifier = bluetoothIdentifier(for: bridge) else { return nil }
@@ -1978,7 +2020,12 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
     @discardableResult
     private func applyVoiceFunctionMapping(neutralizeVoiceKey: Bool) -> Bool {
         let applied = voiceFunctionMapper.apply(
-            muteRemoteButtons: settings.customMappingEnabled,
+            suppressPowerKey: settings.customMappingEnabled,
+            muteRemoteButtons: HIDPermissionGate.canMuteRemoteButtons(
+                mappingEnabled: settings.customMappingEnabled,
+                inputMonitoringGranted: HIDRemoteMonitor.isInputMonitoringGranted,
+                accessibilityGranted: KeyboardInjector.isAccessibilityTrusted
+            ),
             neutralizeVoiceKey: neutralizeVoiceKey
         )
         if !isStreaming {
@@ -1987,7 +2034,8 @@ final class BridgeAppModel: ObservableObject, XiaomiBluetoothBridgeDelegate {
                 applied ? "voice_button.status.fn_enabled" : "voice_button.status.waiting"
             )
         }
-        return !settings.customMappingEnabled || voiceFunctionMapper.areRemoteButtonsMuted
+        return !settings.customMappingEnabled ||
+            (voiceFunctionMapper.isPowerKeySuppressed && voiceFunctionMapper.areRemoteButtonsMuted)
     }
 
     @discardableResult

@@ -135,10 +135,11 @@ final class RemoteVoiceFunctionMapper {
     private let serviceProvider: ServiceProvider
     private var originalMappings: [UInt64: OriginalMappings] = [:]
     private(set) var isApplied = false
-    /// Power is remapped to F20 and every other button is muted on all matched services.
+    private(set) var isPowerKeySuppressed = false
+    /// Every button except power and voice is muted on all matched services.
     private(set) var areRemoteButtonsMuted = false
     private(set) var isVoiceKeyNeutralized = false
-    private var lastRequest: (muteRemoteButtons: Bool, neutralizeVoiceKey: Bool)?
+    private var lastRequest: (suppressPowerKey: Bool, muteRemoteButtons: Bool, neutralizeVoiceKey: Bool)?
 
     init(serviceProvider: @escaping ServiceProvider = RemoteVoiceFunctionMapper.systemServices) {
         self.serviceProvider = serviceProvider
@@ -149,6 +150,7 @@ final class RemoteVoiceFunctionMapper {
     func reapply() -> Bool {
         guard let lastRequest else { return false }
         return apply(
+            suppressPowerKey: lastRequest.suppressPowerKey,
             muteRemoteButtons: lastRequest.muteRemoteButtons,
             neutralizeVoiceKey: lastRequest.neutralizeVoiceKey
         )
@@ -156,16 +158,17 @@ final class RemoteVoiceFunctionMapper {
 
     @discardableResult
     func apply(
+        suppressPowerKey: Bool = false,
         muteRemoteButtons: Bool = false,
         neutralizeVoiceKey: Bool = false
     ) -> Bool {
-        lastRequest = (muteRemoteButtons, neutralizeVoiceKey)
+        lastRequest = (suppressPowerKey, muteRemoteButtons, neutralizeVoiceKey)
         let services = serviceProvider()
         let matchedCount = services.count
         guard matchedCount > 0 else {
             resetAppliedState()
             AppLogger.shared.write(
-                "VOICE FN MAPPING applied=false neutralized=false buttons_muted=false matched=0"
+                "VOICE FN MAPPING applied=false neutralized=false power_suppressed=false buttons_muted=false matched=0"
             )
             return false
         }
@@ -214,7 +217,7 @@ final class RemoteVoiceFunctionMapper {
                 voiceMapping: neutralizeVoiceKey
                     ? RemoteVoiceFunctionMappingPolicy.neutralRemoteVoiceKey
                     : RemoteVoiceFunctionMappingPolicy.remoteVoiceKey,
-                powerMapping: muteRemoteButtons
+                powerMapping: suppressPowerKey
                     ? RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey
                     : originalMappings[registryID]?.power,
                 buttonMappings: muteRemoteButtons
@@ -241,10 +244,12 @@ final class RemoteVoiceFunctionMapper {
         let allTargetsApplied = appliedCount == matchedCount
         isApplied = neutralizeVoiceKey ? allTargetsApplied : appliedCount > 0
         isVoiceKeyNeutralized = neutralizeVoiceKey && allTargetsApplied
+        isPowerKeySuppressed = suppressPowerKey && allTargetsApplied
         areRemoteButtonsMuted = muteRemoteButtons && allTargetsApplied
         AppLogger.shared.write(
             "VOICE FN MAPPING applied=\(isApplied) neutralized=\(isVoiceKeyNeutralized) " +
-                "buttons_muted=\(areRemoteButtonsMuted) matched=\(matchedCount) applied=\(appliedCount)"
+                "power_suppressed=\(isPowerKeySuppressed) buttons_muted=\(areRemoteButtonsMuted) " +
+                "matched=\(matchedCount) applied=\(appliedCount)"
         )
         return isApplied
     }
@@ -307,6 +312,7 @@ final class RemoteVoiceFunctionMapper {
 
     private func resetAppliedState() {
         isApplied = false
+        isPowerKeySuppressed = false
         areRemoteButtonsMuted = false
         isVoiceKeyNeutralized = false
     }

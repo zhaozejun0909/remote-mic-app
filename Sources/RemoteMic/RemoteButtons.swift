@@ -598,6 +598,16 @@ enum HIDPermissionGate {
         mappingEnabled && inputMonitoringGranted && accessibilityGranted && remoteButtonsMuted
     }
 
+    /// Native button events may only be muted when the app can read and replay them;
+    /// otherwise the remote would have no working buttons at all.
+    static func canMuteRemoteButtons(
+        mappingEnabled: Bool,
+        inputMonitoringGranted: Bool,
+        accessibilityGranted: Bool
+    ) -> Bool {
+        mappingEnabled && inputMonitoringGranted && accessibilityGranted
+    }
+
     static func nextPermissionRequest(
         mappingEnabled: Bool,
         voiceFnTapModeEnabled: Bool = false,

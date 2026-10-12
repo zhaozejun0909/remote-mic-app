@@ -118,7 +118,7 @@ struct RemoteVoiceFunctionMapperTests {
         let mapper = RemoteVoiceFunctionMapper { services }
         let muted = RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings
 
-        #expect(mapper.apply(muteRemoteButtons: true, neutralizeVoiceKey: true))
+        #expect(mapper.apply(suppressPowerKey: true, muteRemoteButtons: true, neutralizeVoiceKey: true))
         #expect(mapper.areRemoteButtonsMuted)
         #expect(Set(muted.map(\.source)).isSubset(of: Set(first.mappings.map(\.source))))
         #expect(first.mappings.contains(RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey))
@@ -133,6 +133,20 @@ struct RemoteVoiceFunctionMapperTests {
         #expect(reconnected.mappings.isEmpty)
         #expect(!mapper.reapply())
         #expect(reconnected.mappings.isEmpty)
+    }
+
+    @Test func powerProtectionStaysWhenButtonsCannotBeMuted() {
+        let box = MappingServiceBox(registryID: 1, mappings: [])
+        let mapper = RemoteVoiceFunctionMapper { [box.service] }
+
+        // Without permissions the app cannot replay buttons, so only power is protected.
+        #expect(mapper.apply(suppressPowerKey: true, muteRemoteButtons: false))
+        #expect(mapper.isPowerKeySuppressed)
+        #expect(!mapper.areRemoteButtonsMuted)
+        #expect(box.mappings == [
+            RemoteVoiceFunctionMappingPolicy.remoteVoiceKey,
+            RemoteVoiceFunctionMappingPolicy.suppressedRemotePowerKey,
+        ])
     }
 
     @Test func turningCustomMappingOffRestoresNativeButtons() {
