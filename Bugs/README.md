@@ -27,6 +27,10 @@
 
 | 时间 | Bug | 状态 |
 | --- | --- | --- |
+| 2026-10-10 | [本地键盘监听端口释放](./2026-10-10-local-event-tap-release.md) | 已移植，待长跑验收 |
+| 2026-10-10 | [本地空闲音频恢复抑制](./2026-10-10-local-idle-audio-recovery.md) | 已移植，待真机验收 |
+| 2026-10-10 | [本地共享 HID 权限轮询](./2026-10-10-local-hid-permission-poll.md) | 已移植，待权限验收 |
+| 2026-10-10 | [本地休眠蓝牙暂停](./2026-10-10-local-sleep-bluetooth-work.md) | 已移植，待休眠验收 |
 | 2026-07-29 | [睡眠或音频路由变化后打开页面崩溃](./2026-07-29-audio-route-change-player-crash.md) | 已修复 |
 | 2026-07-30 | [Automatic Application Focus Investigation](./2026-07-30-automatic-application-focus.md) | 已修复 |
 | 2026-07-30 | [cmux Frontmost Refocus Follow-up](./2026-07-30-cmux-frontmost-refocus-follow-up.md) | 已修复 |
@@ -63,6 +67,8 @@
 | 2026-08-10 | [左右键按住不能连续移动](./2026-08-10-left-right-hold-repeat.md) | 候选修复完成，硬件模拟通过，等待真机验证 |
 | 2026-08-10 | [增益滑块轨道拖动带动整个窗口](./2026-08-10-gain-slider-drags-window.md) | 已修复，等待可见界面复验 |
 | 2026-08-11 | [预发布候选工作流依赖 Runner 未安装的 rg](./2026-08-11-preview-candidate-runner-missing-rg.md) | 已修复 |
+| 2026-10-10 | [权限不足或监听停止时遥控器普通按键全部失效](./2026-10-10-hid-muting-without-permissions.md) | 已修复，等待真实权限撤销验证 |
+| 2026-10-10 | [手动重连的 60 秒发现扫描会中断进行中的连接](./2026-10-10-manual-discovery-time-limit.md) | 已修复，等待重新配对场景真机验证 |
 
 ## 记录模板
 

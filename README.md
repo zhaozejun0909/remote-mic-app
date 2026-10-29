@@ -112,15 +112,6 @@ Typeless 等点按 Fn 开始、再次点按结束的语音工具，与 RC003 默
 
 语音键始终用于语音输入与 Fn 功能，不参与普通按键映射。
 
-## 使用统计
-
-“统计”页面可以按日、周或全部范围查看遥控器按键次数、语音时长，以及从当前版本开始记录的最长单次语音排行。所有统计数据仅保存在本机，不会上传。
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Screenshots/statistics-dark-zh.png">
-  <img alt="无线麦使用统计页" src="Screenshots/statistics-zh.png">
-</picture>
-
 ## 权限与隐私
 
 - 蓝牙：连接遥控器并接收语音；

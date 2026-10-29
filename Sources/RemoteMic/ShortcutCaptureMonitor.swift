@@ -72,6 +72,7 @@ final class ShortcutCaptureMonitor {
             eventTap,
             0
         ) else {
+            EventTapPort.release(port: eventTap, source: nil)
             return .failure(.eventTapUnavailable)
         }
 
@@ -83,12 +84,7 @@ final class ShortcutCaptureMonitor {
     }
 
     func stop() {
-        if let runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
-        }
-        if let eventTap {
-            CGEvent.tapEnable(tap: eventTap, enable: false)
-        }
+        EventTapPort.release(port: eventTap, source: runLoopSource)
         runLoopSource = nil
         eventTap = nil
     }

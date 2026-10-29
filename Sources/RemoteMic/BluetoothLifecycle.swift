@@ -41,6 +41,11 @@ enum BluetoothLifecyclePhase: Equatable {
         }
     }
 
+    var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+
     func acceptsDidConnect(generation: UInt64) -> Bool {
         self == .connecting(generation)
     }
@@ -86,6 +91,35 @@ enum BluetoothLifecyclePhase: Equatable {
     }
 }
 
+// Adapted from upstream cfdcc10. A ready voice connection survives suspension.
+struct BluetoothSystemSuspensionState {
+    private(set) var isSuspended = false
+    private var connectionCycleNeeded = false
+
+    mutating func suspend(phase: BluetoothLifecyclePhase) -> Bool {
+        guard !isSuspended else { return false }
+        isSuspended = true
+        if !phase.isReady { connectionCycleNeeded = true }
+        return true
+    }
+
+    mutating func markConnectionCycleNeeded() {
+        connectionCycleNeeded = true
+    }
+
+    mutating func resume() -> Bool {
+        guard isSuspended else { return false }
+        isSuspended = false
+        return true
+    }
+
+    mutating func consumeConnectionCycleNeeded() -> Bool {
+        guard !isSuspended, connectionCycleNeeded else { return false }
+        connectionCycleNeeded = false
+        return true
+    }
+}
+
 enum ATVVSessionGate {
     static let cancelledOpenSuppressionInterval: TimeInterval = 2
 
@@ -114,5 +148,21 @@ enum ATVVSessionGate {
     ) -> Bool {
         guard let cancelledAt else { return false }
         return now < cancelledAt.addingTimeInterval(cancelledOpenSuppressionInterval)
+    }
+}
+
+enum BluetoothConnectTimeoutPolicy {
+    static let fastRetryCount = 6
+    static let fastTimeout: TimeInterval = 8
+    static let awayTimeout: TimeInterval = 30
+
+    static func timeout(afterConsecutiveTimeouts count: Int) -> TimeInterval {
+        count < fastRetryCount ? fastTimeout : awayTimeout
+    }
+}
+
+enum BluetoothDiscoveryPolicy {
+    static func shouldScan(hasSavedRemote: Bool, userInitiated: Bool) -> Bool {
+        !hasSavedRemote || userInitiated
     }
 }

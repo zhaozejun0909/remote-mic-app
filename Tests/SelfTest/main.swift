@@ -212,37 +212,35 @@ check(
     "verified RC003 usage table"
 )
 check(
-    RemoteButton.up.nativeEvent == .keyboard(keyCode: 126) &&
-        RemoteButton.ok.nativeEvent == .keyboard(keyCode: 36) &&
-        RemoteButton.power.nativeEvent == .keyboard(keyCode: 90) &&
-        RemoteButton.volumeUp.nativeEvent == .systemKey(type: 0) &&
-        RemoteButton.back.nativeEvent == nil,
-    "native duplicate-event descriptors"
+    Set(RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings.map(\.source)) ==
+        Set(RemoteButton.allCases.filter { $0 != .power }.map { 0x0000_0007_0000_0000 | UInt64($0.hidUsage) }) &&
+        RemoteVoiceFunctionMappingPolicy.mutedRemoteButtonMappings.allSatisfy { $0.destination == 0 },
+    "every remote button except power is muted at the HID layer"
 )
 check(
     !HIDPermissionGate.canMonitor(
         mappingEnabled: true,
         inputMonitoringGranted: false,
         accessibilityGranted: true,
-        powerKeySuppressed: true
+        remoteButtonsMuted: true
     ) &&
         !HIDPermissionGate.canMonitor(
             mappingEnabled: true,
             inputMonitoringGranted: true,
             accessibilityGranted: false,
-            powerKeySuppressed: true
+            remoteButtonsMuted: true
         ) &&
         !HIDPermissionGate.canMonitor(
             mappingEnabled: true,
             inputMonitoringGranted: true,
             accessibilityGranted: true,
-            powerKeySuppressed: false
+            remoteButtonsMuted: false
         ) &&
         HIDPermissionGate.canMonitor(
             mappingEnabled: true,
             inputMonitoringGranted: true,
             accessibilityGranted: true,
-            powerKeySuppressed: true
+            remoteButtonsMuted: true
         ),
     "HID permission gate fails closed"
 )

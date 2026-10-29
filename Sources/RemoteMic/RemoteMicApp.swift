@@ -60,7 +60,7 @@ enum RemoteMicApp {
 
 @MainActor
 private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate,
-    SPUUpdaterDelegate
+    NSWindowDelegate, SPUUpdaterDelegate
 {
     private enum UpdateCheckPurpose {
         case information
@@ -80,6 +80,7 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
     private var statusItem: NSStatusItem?
     private var statusMenu: NSMenu?
     private var settingsWindowController: NSWindowController?
+    private var displayedStatusImageKey: String?
     private var subscriptions = Set<AnyCancellable>()
     private var terminationSignalSources: [DispatchSourceSignal] = []
     private var applicationShortcutMonitor: Any?
@@ -532,11 +533,19 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
             : model.audioStatus.text(using: localization)
         hidItem.title = model.hidStatus.text(using: localization)
         if let button = statusItem?.button {
-            button.image = statusImage(isStreaming: model.isStreaming)
+            let imageKey = "\(model.isStreaming)|\(localization.locale.identifier)"
+            if imageKey != displayedStatusImageKey {
+                displayedStatusImageKey = imageKey
+                button.image = statusImage(isStreaming: model.isStreaming)
+            }
+            let title: String
             if model.isStreaming, let remainingSeconds = model.voiceRecordingRemainingSeconds {
-                button.title = "\(remainingSeconds)s"
+                title = "\(remainingSeconds)s"
             } else {
-                button.title = ""
+                title = ""
+            }
+            if button.title != title {
+                button.title = title
             }
         }
     }
@@ -618,9 +627,26 @@ private final class RemoteMicAppDelegate: NSObject, NSApplicationDelegate, NSMen
         window.contentViewController = hostingController
         window.isReleasedWhenClosed = false
         window.minSize = NSSize(width: 1020, height: 772)
+        if !window.setFrameUsingName("RemoteMicSettings") {
+            window.center()
+        }
         window.setFrameAutosaveName("RemoteMicSettings")
-        window.center()
+        window.delegate = self
         return NSWindowController(window: window)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === settingsWindowController?.window
+        else { return }
+        // Drop the SwiftUI tree while the menu-bar app keeps running; it is rebuilt on next open.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.settingsWindowController?.window === window,
+                  !window.isVisible
+            else { return }
+            window.contentViewController = nil
+            self.settingsWindowController = nil
+        }
     }
 
     @objc private func showLog() {

@@ -335,61 +335,45 @@ struct HardwareSimulationIntegrationTests {
     }
 
     @Test(arguments: [XiaomiVoiceRemoteButton.left, .right])
-    func monitoredLeftAndRightUseNativeAutorepeatWhenTheirActionsMatch(
+    func leftAndRightArrowActionsAreRepeatedByTheAppAfterHIDMuting(
         _ simulatedButton: XiaomiVoiceRemoteButton
     ) throws {
         let button = try #require(RemoteButton(rawValue: simulatedButton.rawValue))
         let action: ButtonAction = button == .left ? .arrowLeft : .arrowRight
         let result = try driveHIDScenario(
-            XiaomiVoiceRemoteFixture.hidRepeatScenario(button: simulatedButton),
-            isSeized: false
+            XiaomiVoiceRemoteFixture.hidRepeatScenario(button: simulatedButton)
         ) { settings in
             settings.setAction(action, for: button, trigger: .singleClick)
             settings.setAction(.disabled, for: button, trigger: .doubleClick)
             settings.setAction(.disabled, for: button, trigger: .longPress)
         }
-        let keyCode: CGKeyCode = button == .left ? 123 : 124
-        let nativeKeyDown = try #require(CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: keyCode,
-            keyDown: true
-        ))
-
-        #expect(result.events.isEmpty)
-        #expect(!result.eventSuppressor.handle(type: .keyDown, event: nativeKeyDown))
+        // Native key events are muted at the HID layer, so the app performs and repeats arrows itself.
+        #expect(!result.events.isEmpty)
+        #expect(result.events.allSatisfy { $0.action == action })
+        #expect(result.events.first?.trigger == .singleClick)
         #expect(result.scheduler.pendingTaskCount == 0)
     }
 
     @Test(arguments: [XiaomiVoiceRemoteButton.left, .right])
-    func monitoredDirectionsKeepCustomRepeatWithoutLeavingNativeKeysSuppressed(
+    func directionsKeepCustomRepeat(
         _ simulatedButton: XiaomiVoiceRemoteButton
     ) throws {
         let button = try #require(RemoteButton(rawValue: simulatedButton.rawValue))
         let result = try driveHIDScenario(
-            XiaomiVoiceRemoteFixture.hidRepeatScenario(button: simulatedButton),
-            isSeized: false
+            XiaomiVoiceRemoteFixture.hidRepeatScenario(button: simulatedButton)
         ) { settings in
             settings.setAction(.volumeDown, for: button, trigger: .singleClick)
             settings.setAction(.disabled, for: button, trigger: .doubleClick)
             settings.setAction(.disabled, for: button, trigger: .longPress)
         }
-        let keyCode: CGKeyCode = button == .left ? 123 : 124
-        let nativeKeyDown = try #require(CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: keyCode,
-            keyDown: true
-        ))
-
         #expect(result.events.count == 6)
         #expect(result.events.allSatisfy { $0.action == .volumeDown })
-        #expect(!result.eventSuppressor.handle(type: .keyDown, event: nativeKeyDown))
         #expect(result.scheduler.pendingTaskCount == 0)
     }
 
     @Test func monitoredLeftStillUsesAppPolicyWhenRemoteMicIsFrontmost() throws {
         let result = try driveHIDScenario(
             XiaomiVoiceRemoteFixture.hidRepeatScenario(button: .left),
-            isSeized: false,
             frontmostBundleIdentifier: PresetApplication.remoteMic.bundleIdentifier
         ) { settings in
             settings.setAction(.arrowLeft, for: .left, trigger: .singleClick)
@@ -600,7 +584,6 @@ struct HardwareSimulationIntegrationTests {
 
     private func driveHIDScenario(
         _ scenario: HardwareScenario,
-        isSeized: Bool = true,
         frontmostBundleIdentifier: String = PresetApplication.codex.bundleIdentifier,
         configure: (AppSettings) -> Void
     ) throws -> HIDScenarioResult {
@@ -613,12 +596,9 @@ struct HardwareSimulationIntegrationTests {
         let profileID = try #require(settings.selectedRemoteProfileID)
         let scheduler = TestHIDRemoteScheduler()
         let recorder = HIDActionRecorder()
-        let eventSuppressor = KeyboardEventSuppressor()
         let monitor = HIDRemoteMonitor(
             settings: settings,
             profileID: profileID,
-            eventSuppressor: eventSuppressor,
-            ownsEventSuppressor: false,
             scheduler: scheduler,
             runtimePermissions: { true },
             actionPerformer: { button, trigger, configured in
@@ -633,8 +613,7 @@ struct HardwareSimulationIntegrationTests {
         )
         monitor.connectSimulatedDevice(
             fingerprint: "fixture-device-1",
-            profileID: profileID,
-            isSeized: isSeized
+            profileID: profileID
         )
 
         let runner = try HardwareScenarioRunner(
@@ -652,8 +631,7 @@ struct HardwareSimulationIntegrationTests {
         scheduler.advance(toMilliseconds: scenario.durationMilliseconds ?? runner.currentTimeMilliseconds)
         return HIDScenarioResult(
             events: recorder.events,
-            scheduler: scheduler,
-            eventSuppressor: eventSuppressor
+            scheduler: scheduler
         )
     }
 }
@@ -667,7 +645,6 @@ private struct HIDPerformedAction: Equatable {
 private struct HIDScenarioResult {
     let events: [HIDPerformedAction]
     let scheduler: TestHIDRemoteScheduler
-    let eventSuppressor: KeyboardEventSuppressor
 }
 
 private final class HIDActionRecorder {

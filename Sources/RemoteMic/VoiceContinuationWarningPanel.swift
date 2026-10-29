@@ -27,7 +27,11 @@ final class VoiceContinuationWarningPanelController {
     }
 
     func hide() {
-        panel?.orderOut(nil)
+        guard let panel else { return }
+        // Release the view so its repeating pulse animation cannot keep running while hidden.
+        panel.orderOut(nil)
+        panel.contentView = nil
+        self.panel = nil
     }
 
     private func makePanelIfNeeded() -> NSPanel {

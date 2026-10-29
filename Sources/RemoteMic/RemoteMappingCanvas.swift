@@ -351,7 +351,8 @@ struct RemoteMappingCanvas: View {
     }
 }
 
-private enum MappingRemoteImageResource {
+/// Single decoded copy of the remote photo shared by every page.
+enum RemotePhotoResource {
     static let image: NSImage? = {
         guard let url = Bundle.main.url(
             forResource: "RC003-remote-photo",
@@ -364,7 +365,7 @@ private enum MappingRemoteImageResource {
 private struct MappingRemotePhoto: View {
     var body: some View {
         Group {
-            if let photo = MappingRemoteImageResource.image {
+            if let photo = RemotePhotoResource.image {
                 Image(nsImage: photo)
                     .resizable()
                     .aspectRatio(contentMode: .fill)

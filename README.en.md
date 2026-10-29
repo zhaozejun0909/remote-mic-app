@@ -97,15 +97,6 @@ Each ordinary button supports a single-click action and optional double-click an
 
 The voice button is always reserved for voice input and Fn functions and does not participate in ordinary button mapping.
 
-## Usage statistics
-
-The **Statistics** page shows remote button presses, voice duration, and the longest individual voice sessions for the selected day, week, or all-time range. All statistics stay on this Mac and are never uploaded.
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="Screenshots/statistics-dark-en.png">
-  <img alt="Remote Mic usage statistics" src="Screenshots/statistics-en.png">
-</picture>
-
 ## Permissions and privacy
 
 - Bluetooth: connect to the remote and receive voice.

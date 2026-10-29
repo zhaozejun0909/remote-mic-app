@@ -46,3 +46,28 @@ struct SystemAudioSuspensionState {
         hasActiveVoiceOrTone || (hasReadyRemote && !isSuspended)
     }
 }
+
+enum IdleAudioPausePolicy {
+    static let delay: TimeInterval = 30
+
+    /// Continuation waits keep the Bluetooth voice source active, so they never pause.
+    static func canPause(
+        shouldKeepAudioActive: Bool,
+        hasActiveSource: Bool,
+        isStreaming: Bool,
+        pendingVoiceBufferCount: Int,
+        releasePending: Bool
+    ) -> Bool {
+        shouldKeepAudioActive && !hasActiveSource && !isStreaming &&
+            pendingVoiceBufferCount == 0 && !releasePending
+    }
+
+    /// Only retry while audio is still in use; otherwise the release path owns the engine.
+    static func shouldRetryLater(
+        hasActiveSource: Bool,
+        isStreaming: Bool,
+        pendingVoiceBufferCount: Int
+    ) -> Bool {
+        hasActiveSource || isStreaming || pendingVoiceBufferCount > 0
+    }
+}

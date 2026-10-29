@@ -241,6 +241,7 @@ final class VirtualAudioOutput {
     )!
 
     private(set) var selectedDevice: AudioDeviceInfo?
+    private(set) var isIdlePaused = false
     private(set) var status = LocalizedMessage("audio.output.none_selected")
     var onConfigurationChange: (() -> Void)?
 
@@ -337,7 +338,12 @@ final class VirtualAudioOutput {
     }
 
     var isReadyForTestTone: Bool {
-        isPlaybackReady && selectedDevice?.id == currentOutputDevice()?.id
+        isPlaybackReady && isBoundToSelectedDevice == true
+    }
+
+    var isBoundToSelectedDevice: Bool? {
+        guard let selectedDevice, let currentDevice = currentOutputDevice() else { return nil }
+        return selectedDevice.id == currentDevice.id
     }
 
     private var isPlaybackReady: Bool {
@@ -485,7 +491,40 @@ final class VirtualAudioOutput {
         }
     }
 
+    /// Stops hardware IO while nothing is playing but keeps the configured engine, so the
+    /// next session resumes in about 15 ms instead of an ~80 ms rebuild.
+    @discardableResult
+    func pauseWhileIdle() -> Bool {
+        guard let engine, engine.isRunning, pendingVoiceBufferCountForDiagnostics == 0 else {
+            return false
+        }
+        engine.pause()
+        isIdlePaused = true
+        AppLogger.shared.write("AUDIO IDLE paused")
+        return true
+    }
+
+    @discardableResult
+    func resumeFromIdlePause() -> Bool {
+        guard isIdlePaused, let engine, let player else { return false }
+        isIdlePaused = false
+        do {
+            try engine.start()
+        } catch {
+            AppLogger.shared.write("AUDIO IDLE resume_failed error=\(error.localizedDescription)")
+            return false
+        }
+        guard AudioPlayerNodeSafety.play(player) else {
+            AppLogger.shared.write("AUDIO IDLE resume_failed error=player_start_exception")
+            return false
+        }
+        let ready = isReadyForTestTone
+        AppLogger.shared.write("AUDIO IDLE resumed ready=\(ready)")
+        return ready
+    }
+
     func stop() {
+        isIdlePaused = false
         playbackLock.lock()
         playbackGeneration &+= 1
         let interruptedContexts = pendingVoiceBufferCount > 0 ? pendingDrainLogContexts : []
@@ -599,6 +638,7 @@ final class VirtualAudioOutput {
 
     private func basicDiagnosticState() -> String {
         "engine_running=\(engine?.isRunning == true) player_playing=\(player?.isPlaying == true) " +
+            "idle_paused=\(isIdlePaused) " +
             "selected={\(CoreAudioDeviceCatalog.deviceDiagnostic(selectedDevice))}"
     }
 
